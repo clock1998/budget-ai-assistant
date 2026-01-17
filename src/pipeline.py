@@ -10,7 +10,7 @@ def create_llm_table_generator():
     
     # Use a smaller, more accessible model for demonstration
     # You can change this to "meta-llama/Llama-3.1-8B-Instruct" when you have access
-    model_name = "meta-llama/Llama-3.1-8B-Instruct" # Replace with actual Llama model
+    model_name = "uw4i8p4/transaction-classification" # Replace with actual Llama model
     
     generator = pipeline(
         "text-generation",
