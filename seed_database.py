@@ -7,7 +7,7 @@ from sentence_transformers import SentenceTransformer
 model = SentenceTransformer(
     "Qwen/Qwen3-Embedding-8B", 
     device="cuda", 
-    model_kwargs={"torch_dtype": "bfloat16"}
+    model_kwargs={"dtype": "bfloat16"}
 )
 
 db = sqlite3.connect("my_db.db")
@@ -47,7 +47,7 @@ businesses = pd.read_csv('quebec_business_full_export.csv')
 embeddings = model.encode(businesses['business_name'].tolist(), prompt_name="document")
 
 for i, row in businesses.iterrows():
-    vector =   embeddings[i].astype(np.float32)
+    vector_bytes = embeddings[i].astype(np.float32).tobytes()
     # Insert text into documents
     cursor.execute('''INSERT INTO vec_documents (
                    rowid, 
@@ -55,7 +55,7 @@ for i, row in businesses.iterrows():
                    business_name, 
                    business_domain, 
                    business_niche_description) VALUES (?, ?, ?, ?, ?)'''
-                   , (i, vector, row['business_name'], row['business_domain'], row['business_niche_description']))
+                   , (i, vector_bytes, row['business_name'], row['business_domain'], row['business_niche_description']))
     
 db.commit()
 print(cursor.execute("""
