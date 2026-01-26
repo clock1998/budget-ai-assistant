@@ -14,7 +14,7 @@ db.execute("""
                );
 """)
 
-businesses = pd.read_csv('quebec_business_full_export.csv')
+businesses = pd.read_csv('data.csv')
 data = [];
 for i, row in businesses.iterrows():
     # Insert text into documents

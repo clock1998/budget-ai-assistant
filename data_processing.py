@@ -45,4 +45,4 @@ final_output = entreprise_decoded[[
     'DESC_ACT_ECON_ASSUJ': 'business_niche_description'
 })
 print(final_output.head())
-final_output.to_csv('quebec_business_full_export.csv',index=False)
+final_output.to_csv('data.csv',index=False)

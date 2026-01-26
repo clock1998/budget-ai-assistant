@@ -43,7 +43,7 @@ cursor.execute("""
                );
 """)
 
-businesses = pd.read_csv('quebec_business_full_export.csv')
+businesses = pd.read_csv('data.csv')
 embeddings = model.encode(businesses['business_name'].tolist(), prompt_name="document")
 
 for i, row in businesses.iterrows():
