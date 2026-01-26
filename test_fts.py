@@ -2,7 +2,7 @@
 import sqlite3
 
 db = sqlite3.connect("my_db.db")
-search_term = 'business_name: DÉELISPHARM INC'
+search_term = 'business_name: "PLOMBERIE CARL ST-AMOUR INC."'
 query = """
     SELECT business_name,
             business_domain, 
