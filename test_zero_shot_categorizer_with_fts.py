@@ -55,7 +55,26 @@ translated_business = translate_local(results[0][1] +', '+ results[0][2])
 
 text = translated_business
 hypothesis_template = "This description of a business domain or activity is in {} budget category."
-classes_verbalized = ['Housing', 'Utilities', 'Transportation', 'Groceries', 'Insurance', 'Healthcare', 'Debt Payments', 'Savings & Investments', 'Personal Care', 'Entertainment', 'Dining Out', 'Household Supplies', 'Education', 'Gifts & Donations', 'Miscellaneous']
+classes_verbalized = [
+  'Groceries & Supermarkets',
+  'Dining & Restaurants',
+  'Fast Food & Coffee Shops',
+  'Gas & Fuel',
+  'Travel (Airfare, Hotels, Car Rentals)',
+  'Transit (Rideshare, Trains, Tolls)',
+  'Bills & Utilities (Recurring)',
+  'Entertainment (Movies, Events, Hobbies)',
+  'Streaming & Digital Subscriptions',
+  'Health & Wellness (Gym, Pharmacy, Copays)',
+  'Shopping & Department Stores',
+  'Home Improvement & Decor',
+  'Automotive (Parts & Service)',
+  'Personal Care (Salon, Barber, Spa)',
+  'Professional Services (Legal, Tax, Business)',
+  'Insurance Premiums',
+  'Charity & Donations',
+  'Miscellaneous & Fees'
+]
 zeroshot_classifier = pipeline("zero-shot-classification", model="MoritzLaurer/deberta-v3-large-zeroshot-v2.0")  # change the model identifier here
 output = zeroshot_classifier(text, classes_verbalized, hypothesis_template=hypothesis_template, multi_label=False)
 print(output)
