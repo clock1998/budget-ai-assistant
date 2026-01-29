@@ -1,6 +1,12 @@
 from img2table.document import PDF
+from img2table.ocr import TesseractOCR
 import pandas as pd
 import os
+import re
+from pathlib import Path
+# Configure OCR languages: use single like ["eng"] or multiple like ["eng","spa"]
+OCR_LANGS = ["eng","fra"]  # change to ["eng","spa"] etc. as needed (ensure traineddata installed)
+ocr = TesseractOCR(n_threads=1, lang="+".join(OCR_LANGS))
 
 def extract_tables_from_pdf(pdf_path, output_dir="extracted_tables"):
     """
@@ -24,8 +30,7 @@ def extract_tables_from_pdf(pdf_path, output_dir="extracted_tables"):
 
     # Extract tables
     print(f"Extracting tables from {pdf_path}...")
-    extracted_tables = doc.extract_tables()
-
+    extracted_tables = doc.extract_tables(ocr=None, borderless_tables=True)
     # The extract_tables method returns a dict where keys are page numbers and values are lists of tables
     for page_num, tables_list in extracted_tables.items():
         print(f"Processing page {page_num+1}, found {len(tables_list)} tables")
@@ -33,43 +38,46 @@ def extract_tables_from_pdf(pdf_path, output_dir="extracted_tables"):
             # Get the title and normalize it to uppercase for easier matching
             table_title = getattr(table, 'title', "") or ""
             
-            # Filter: Check if "TRANSACTIONS" is in the title
-            if "TRANSACTION" in table_title.upper():
-                print(f"🎯 Match found on page {page_num+1}: {table_title}")
+            if table is not None and hasattr(table, 'df'):
+                df = table.df
                 
-                if table is not None and hasattr(table, 'df'):
-                    df = table.df
-                    
-                    # Display original headers
-                    print(f"\n**Original headers:** {list(df.columns)}")
-                    
-                    # Rename columns - customize this mapping as needed
-                    column_mapping = {
-                        df.columns[i]: new_name 
-                        for i, new_name in enumerate(["Date", "Description", "Amount", "Balance"])
-                        if i < len(df.columns)
-                    }
-                    df = df.rename(columns=column_mapping)
-                    
-                    # Select only the columns we need
-                    desired_columns = ["Date", "Description", "Amount"]
-                    df = df[[col for col in desired_columns if col in df.columns]]
-                    
-                    print(f"**Renamed headers:** {list(df.columns)}")
-                    
-                    # Output table in markdown format
-                    print(f"\n### Page {page_num+1} - {table_title}\n")
-                    print(df.to_markdown(index=False))
-                    print()
-            else:
-                # Skip tables that don't match
-                continue
+                # Output table in markdown format
+                print(f"\n### Page {page_num+1} - {table_title}\n")
+                md_table = df.to_markdown(index=False)
+                print(md_table)
+                print()
+                print(df.head())
 
     return extracted_tables
 
+def promote_headers(df, row_count=1):
+    """
+    Promotes the first N rows to headers. 
+    If row_count > 1, it joins them with a space.
+    """
+    if df.empty:
+        return df
+
+    if row_count == 1:
+        new_columns = df.iloc[0].astype(str).str.strip()
+    else:
+        # Merges row 0 and row 1 for each column
+        new_columns = [
+            " ".join(df.iloc[0:row_count, i].dropna().astype(str)).strip()
+            for i in range(df.shape[1])
+        ]
+
+    df.columns = new_columns
+    df = df.iloc[row_count:].reset_index(drop=True)
+    df.columns.name = None
+    return df
+
+# Usage in your script:
+# table_df = promote_headers(table.df, row_count=2) # Use 2 if headers are stacked
+# print(table_df.to_markdown(index=False))
 if __name__ == "__main__":
     # Path to the PDF file
     pdf_path = "./scotia_bank_december_2025.pdf"
-
+    pdf_path = "./desjardins_december_2025.pdf"
     # Extract tables
     tables = extract_tables_from_pdf(pdf_path)
