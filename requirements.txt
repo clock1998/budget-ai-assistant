@@ -5,6 +5,7 @@ numba==0.63.1
 numpy==2.3.5
 opencv-contrib-python-headless==4.13.0.90
 pandas==3.0.0
+pdfplumber
 pillow==12.1.0
 polars==1.37.1
 polars-runtime-32==1.37.1
