@@ -4,104 +4,59 @@ import os
 import re
 
 
-def extract_tables_from_pdf(pdf_path, output_dir="extracted_tables"):
+def detect_bank_type(pdf_text):
     """
-    Extract tables from bank statement PDFs using PDFPlumber.
-    Handles tables without visible grid lines and multiline rows.
+    Detect the bank type from PDF content.
     
     Args:
-        pdf_path: Path to the PDF file
-        output_dir: Directory to save extracted tables as CSV
+        pdf_text: Concatenated text from all pages of the PDF
     
     Returns:
-        List of pandas DataFrames containing extracted tables
+        String identifying the bank type: 'desjardins', 'scotia', 'rogers', or 'unknown'
     """
-    os.makedirs(output_dir, exist_ok=True)
-    extracted_tables = []
+    text_lower = pdf_text.lower()
     
-    # Table extraction settings optimized for bank statements
-    # These settings help detect tables without visible grid lines
-    table_settings = {
-        "vertical_strategy": "text",      # Use text alignment to find columns
-        "horizontal_strategy": "lines_strict",  # Use lines for rows when available
-        "snap_tolerance": 4,              # Tolerance for snapping lines
-        "snap_x_tolerance": 4,
-        "snap_y_tolerance": 4,
-        "join_tolerance": 4,              # Tolerance for joining lines
-        "join_x_tolerance": 4,
-        "join_y_tolerance": 4,
-        "edge_min_length": 10,
-        "min_words_vertical": 3,          # Min words to identify vertical line
-        "min_words_horizontal": 1,        # Min words to identify horizontal line
-        "intersection_tolerance": 5,
-        "text_tolerance": 3,
-        "text_x_tolerance": 3,
-        "text_y_tolerance": 3,
-    }
+    # Desjardins indicators
+    desjardins_indicators = [
+        'desjardins',
+        'caisse populaire',
+        'mouvement desjardins',
+        'bonidollars',
+        'relevé de compte',
+        'accès d',  # AccèsD
+    ]
     
-    # Alternative settings for tables without any grid lines
-    text_only_settings = {
-        "vertical_strategy": "text",
-        "horizontal_strategy": "text",
-        "snap_tolerance": 5,
-        "join_tolerance": 5,
-        "min_words_vertical": 2,
-        "min_words_horizontal": 1,
-        "text_tolerance": 3,
-        "text_x_tolerance": 5,
-        "text_y_tolerance": 3,
-    }
+    # Scotia Bank indicators
+    scotia_indicators = [
+        'scotiabank',
+        'scotia bank',
+        'bank of nova scotia',
+        'scene+',
+        'scenepoints',
+    ]
     
-    with pdfplumber.open(pdf_path) as pdf:
-        print(f"Processing PDF: {pdf_path}")
-        print(f"Total pages: {len(pdf.pages)}")
-        
-        for page_num, page in enumerate(pdf.pages, start=1):
-            print(f"\n--- Page {page_num} ---")
-            
-            # Try multiple extraction strategies
-            tables = []
-            
-            # Strategy 1: Try with lines-based detection first
-            try:
-                tables = page.extract_tables(table_settings)
-            except Exception:
-                pass
-            
-            # Strategy 2: If no tables found, try text-only detection
-            if not tables:
-                try:
-                    tables = page.extract_tables(text_only_settings)
-                except Exception:
-                    pass
-            
-            # Strategy 3: Fall back to default settings
-            if not tables:
-                tables = page.extract_tables()
-            
-            for table_idx, table in enumerate(tables):
-                if table and len(table) > 1:  # Ensure table has data
-                    # Clean and process the table
-                    df = process_table(table)
-                    
-                    if df is not None and not df.empty:
-                        extracted_tables.append({
-                            "page": page_num,
-                            "table_index": table_idx,
-                            "dataframe": df
-                        })
-                        
-                        # Save to CSV
-                        csv_filename = f"page{page_num}_table{table_idx}.csv"
-                        csv_path = os.path.join(output_dir, csv_filename)
-                        df.to_csv(csv_path, index=False)
-                        print(f"Saved: {csv_filename} ({len(df)} rows)")
-                        
-                        # Display preview
-                        print(df.head().to_string())
+    # Rogers Bank indicators
+    rogers_indicators = [
+        'rogers bank',
+        'rogersbank',
+        'rogers mastercard',
+        'rogers world elite',
+    ]
     
-    print(f"\nTotal tables extracted: {len(extracted_tables)}")
-    return extracted_tables
+    # Count matches for each bank
+    desjardins_count = sum(1 for indicator in desjardins_indicators if indicator in text_lower)
+    scotia_count = sum(1 for indicator in scotia_indicators if indicator in text_lower)
+    rogers_count = sum(1 for indicator in rogers_indicators if indicator in text_lower)
+    
+    # Return the bank with most matches
+    if desjardins_count > 0 and desjardins_count >= max(scotia_count, rogers_count):
+        return 'desjardins'
+    elif scotia_count > 0 and scotia_count >= rogers_count:
+        return 'scotia'
+    elif rogers_count > 0:
+        return 'rogers'
+    else:
+        return 'unknown'
 
 
 def extract_transactions_from_pdf(pdf_path, output_dir="extracted_tables"):
@@ -119,18 +74,21 @@ def extract_transactions_from_pdf(pdf_path, output_dir="extracted_tables"):
     os.makedirs(output_dir, exist_ok=True)
     all_transactions = []
     
-    # Detect bank type from filename
-    is_desjardins = 'desjardins' in pdf_path.lower()
-    
     with pdfplumber.open(pdf_path) as pdf:
         print(f"Extracting transactions from: {pdf_path}")
         
-        # First pass: collect all text to extract year
+        # First pass: collect all text to extract year and detect bank type
         all_text_lines = []
+        full_text = ""
         for page in pdf.pages:
             text = page.extract_text()
             if text:
                 all_text_lines.extend(text.split('\n'))
+                full_text += text + "\n"
+        
+        # Detect bank type from content
+        bank_type = detect_bank_type(full_text)
+        print(f"Detected bank type: {bank_type}")
         
         # Second pass: extract transactions from each page
         for page_num, page in enumerate(pdf.pages, start=1):
@@ -140,11 +98,11 @@ def extract_transactions_from_pdf(pdf_path, output_dir="extracted_tables"):
             
             lines = text.split('\n')
             
-            if is_desjardins:
+            if bank_type == 'desjardins':
                 # Parse Desjardins format (pass all lines for year extraction)
                 transactions = parse_desjardins_transactions(lines, all_text_lines)
             else:
-                # Parse Scotia/generic format (pass all lines for year extraction)
+                # Parse Scotia/Rogers/generic format (pass all lines for year extraction)
                 transactions = parse_generic_transactions(lines, all_text_lines)
             
             all_transactions.extend(transactions)
@@ -580,11 +538,7 @@ if __name__ == "__main__":
         print(f"Processing: {pdf_path}")
         print('='*60)
         
-        # Method 1: Extract tables using table detection
-        print("\n--- Table Extraction ---")
-        tables = extract_tables_from_pdf(pdf_path)
-        
-        # Method 2: Extract transactions using text parsing
+        # Extract transactions using text parsing
         print("\n--- Transaction Extraction ---")
         transactions_df = extract_transactions_from_pdf(pdf_path)
         
