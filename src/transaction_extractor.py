@@ -166,8 +166,8 @@ class DesjardinsParser(BankParser):
 
             return (
                 Transaction(
-                    date=f"{trans_day}/{trans_month}/{year}",
-                    post_date=f"{post_day}/{post_month}/{year}",
+                    date=f"{year}/{int(trans_month):02d}/{int(trans_day):02d}",
+                    post_date=f"{year}/{int(post_month):02d}/{int(post_day):02d}",
                     description=description,
                     amount=amount,
                 ),
@@ -179,6 +179,12 @@ class DesjardinsParser(BankParser):
 
 class GenericParser(BankParser):
     """Parser for generic bank statements (Scotia, Rogers, etc.)."""
+
+    # Month name to number mapping
+    MONTH_MAP = {
+        'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
+        'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12,
+    }
 
     # Two-date pattern (transaction + post date)
     PATTERN_TWO_DATES = re.compile(
@@ -269,9 +275,12 @@ class GenericParser(BankParser):
             if is_credit:
                 amount = -amount
 
+            trans_month_num = self.MONTH_MAP.get(trans_month.lower(), 1)
+            post_month_num = self.MONTH_MAP.get(post_month.lower(), 1)
+
             return Transaction(
-                date=f"{trans_month} {trans_day}, {year}",
-                post_date=f"{post_month} {post_day}, {year}",
+                date=f"{year}/{trans_month_num:02d}/{int(trans_day):02d}",
+                post_date=f"{year}/{post_month_num:02d}/{int(post_day):02d}",
                 description=description,
                 amount=amount,
             )
@@ -290,8 +299,10 @@ class GenericParser(BankParser):
             if is_credit:
                 amount = -amount
 
+            trans_month_num = self.MONTH_MAP.get(trans_month.lower(), 1)
+
             return Transaction(
-                date=f"{trans_month} {trans_day}, {year}",
+                date=f"{year}/{trans_month_num:02d}/{int(trans_day):02d}",
                 post_date=None,
                 description=description,
                 amount=amount,
