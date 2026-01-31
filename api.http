@@ -1,0 +1,64 @@
+### Budget AI Assistant API Tests
+### Use with REST Client extension in VS Code
+
+### Variables
+@baseUrl = http://localhost:8000
+
+### Health Check
+GET {{baseUrl}}/
+
+### Extract transactions from a single PDF file
+# @name extractSingle
+POST {{baseUrl}}/extract/single
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundary
+
+------WebKitFormBoundary
+Content-Disposition: form-data; name="file"; filename="desjardins_december_2025.pdf"
+Content-Type: application/pdf
+
+< ./desjardins_december_2025.pdf
+------WebKitFormBoundary--
+
+### Extract transactions from multiple PDF files
+# @name extractMultiple
+POST {{baseUrl}}/extract
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundary
+
+------WebKitFormBoundary
+Content-Disposition: form-data; name="files"; filename="desjardins_december_2025.pdf"
+Content-Type: application/pdf
+
+< ./desjardins_december_2025.pdf
+------WebKitFormBoundary
+Content-Disposition: form-data; name="files"; filename="scotia_bank_december_2025.pdf"
+Content-Type: application/pdf
+
+< ./scotia_bank_december_2025.pdf
+------WebKitFormBoundary
+Content-Disposition: form-data; name="files"; filename="rogers_december_2025.pdf"
+Content-Type: application/pdf
+
+< ./rogers_december_2025.pdf
+------WebKitFormBoundary--
+
+### Test with Scotia Bank only
+POST {{baseUrl}}/extract/single
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundary
+
+------WebKitFormBoundary
+Content-Disposition: form-data; name="file"; filename="scotia_bank_december_2025.pdf"
+Content-Type: application/pdf
+
+< ./scotia_bank_december_2025.pdf
+------WebKitFormBoundary--
+
+### Test with Rogers only
+POST {{baseUrl}}/extract/single
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundary
+
+------WebKitFormBoundary
+Content-Disposition: form-data; name="file"; filename="rogers_december_2025.pdf"
+Content-Type: application/pdf
+
+< ./rogers_december_2025.pdf
+------WebKitFormBoundary--

@@ -3,15 +3,15 @@ Budget AI Assistant API
 
 FastAPI endpoints for extracting transactions from bank statement PDFs.
 """
-
-import os
-import tempfile
+import uvicorn
 from typing import Optional
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from transaction_extractor import BankType, TransactionExtractor
+from src.extractor import TransactionExtractor
+from src.models import BankType
+
 
 app = FastAPI(
     title="Budget AI Assistant",
@@ -45,12 +45,6 @@ class ExtractionResponse(BaseModel):
     results: list[FileResult]
 
 
-@app.get("/")
-async def root():
-    """Health check endpoint."""
-    return {"status": "ok", "message": "Budget AI Assistant API"}
-
-
 @app.post("/extract", response_model=ExtractionResponse)
 async def extract_transactions(files: list[UploadFile] = File(...)):
     """
@@ -80,16 +74,9 @@ async def extract_transactions(files: list[UploadFile] = File(...)):
             failed += 1
             continue
 
-        # Save uploaded file temporarily
-        temp_path = None
         try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
-                content = await file.read()
-                temp_file.write(content)
-                temp_path = temp_file.name
-
-            # Extract transactions
-            df, bank_type = extractor.extract_with_info(temp_path)
+            # Extract transactions using upload method
+            df, bank_type = await extractor.extract_from_upload(file)
 
             if df.empty:
                 transactions = []
@@ -122,11 +109,6 @@ async def extract_transactions(files: list[UploadFile] = File(...)):
             ))
             failed += 1
 
-        finally:
-            # Clean up temp file
-            if temp_path and os.path.exists(temp_path):
-                os.unlink(temp_path)
-
     return ExtractionResponse(
         total_files=len(files),
         successful=successful,
@@ -150,15 +132,9 @@ async def extract_single_file(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="File must be a PDF")
 
     extractor = TransactionExtractor()
-    temp_path = None
 
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
-            content = await file.read()
-            temp_file.write(content)
-            temp_path = temp_file.name
-
-        df, bank_type = extractor.extract_with_info(temp_path)
+        df, bank_type = await extractor.extract_from_upload(file)
 
         if df.empty:
             transactions = []
@@ -183,11 +159,7 @@ async def extract_single_file(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    finally:
-        if temp_path and os.path.exists(temp_path):
-            os.unlink(temp_path)
-
 
 if __name__ == "__main__":
-    import uvicorn
+    
     uvicorn.run(app, host="0.0.0.0", port=8000)
