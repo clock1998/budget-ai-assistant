@@ -23,18 +23,12 @@ print(f"vec_version={vec_version}")
 
 cursor = db.cursor()
 
-# # Create a standard table for metadata (text, titles, etc.)
-# cursor.execute('''
-#     CREATE TABLE IF NOT EXISTS documents (
-#         row_id INTEGER PRIMARY KEY,
-#         business_name TEXT,
-#         business_domain TEXT,
-#         business_niche_description TEXT
-#     )
-# ''')
+cursor.execute("""
+    DELETE VIRTUAL TABLE IF EXISTS vec_documents;
+""")
 
 cursor.execute("""
-    CREATE VIRTUAL TABLE IF NOT EXISTS vec_documents USING 
+    CREATE VIRTUAL TABLE vec_documents USING 
                vec0(
                 business_name_embedding float[4096],
                 +business_name text, 

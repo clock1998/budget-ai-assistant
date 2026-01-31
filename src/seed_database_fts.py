@@ -4,8 +4,12 @@ import pandas as pd
 db = sqlite3.connect("my_db.db")
 
 
+db.execute("""    
+    DELETE VIRTUAL TABLE IF EXISTS fts_documents;
+""")
+
 db.execute("""
-    CREATE VIRTUAL TABLE IF NOT EXISTS fts_documents USING 
+    CREATE VIRTUAL TABLE fts_documents USING 
                fts5(
                 business_name,
                 business_domain, 
