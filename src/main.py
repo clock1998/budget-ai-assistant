@@ -1,548 +1,193 @@
-import pdfplumber
-import pandas as pd
+"""
+Budget AI Assistant API
+
+FastAPI endpoints for extracting transactions from bank statement PDFs.
+"""
+
 import os
-import re
+import tempfile
+from typing import Optional
+
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from pydantic import BaseModel
+
+from transaction_extractor import BankType, TransactionExtractor
+
+app = FastAPI(
+    title="Budget AI Assistant",
+    description="Extract transactions from bank statement PDFs",
+    version="1.0.0",
+)
 
 
-def detect_bank_type(pdf_text):
+class TransactionResponse(BaseModel):
+    """Response model for a single transaction."""
+    date: str
+    post_date: Optional[str]
+    description: str
+    amount: float
+
+
+class FileResult(BaseModel):
+    """Result for a single file extraction."""
+    filename: str
+    bank_type: str
+    transactions: list[TransactionResponse]
+    transaction_count: int
+    error: Optional[str] = None
+
+
+class ExtractionResponse(BaseModel):
+    """Response model for extraction endpoint."""
+    total_files: int
+    successful: int
+    failed: int
+    results: list[FileResult]
+
+
+@app.get("/")
+async def root():
+    """Health check endpoint."""
+    return {"status": "ok", "message": "Budget AI Assistant API"}
+
+
+@app.post("/extract", response_model=ExtractionResponse)
+async def extract_transactions(files: list[UploadFile] = File(...)):
     """
-    Detect the bank type from PDF content.
+    Extract transactions from uploaded bank statement PDFs.
     
     Args:
-        pdf_text: Concatenated text from all pages of the PDF
-    
+        files: List of PDF files to process.
+        
     Returns:
-        String identifying the bank type: 'desjardins', 'scotia', 'rogers', or 'unknown'
+        ExtractionResponse with transactions from all files.
     """
-    text_lower = pdf_text.lower()
-    
-    # Desjardins indicators
-    desjardins_indicators = [
-        'desjardins',
-        'caisse populaire',
-        'mouvement desjardins',
-        'bonidollars',
-        'relevé de compte',
-        'accès d',  # AccèsD
-    ]
-    
-    # Scotia Bank indicators
-    scotia_indicators = [
-        'scotiabank',
-        'scotia bank',
-        'bank of nova scotia',
-        'scene+',
-        'scenepoints',
-    ]
-    
-    # Rogers Bank indicators
-    rogers_indicators = [
-        'rogers bank',
-        'rogersbank',
-        'rogers mastercard',
-        'rogers world elite',
-    ]
-    
-    # Count matches for each bank
-    desjardins_count = sum(1 for indicator in desjardins_indicators if indicator in text_lower)
-    scotia_count = sum(1 for indicator in scotia_indicators if indicator in text_lower)
-    rogers_count = sum(1 for indicator in rogers_indicators if indicator in text_lower)
-    
-    # Return the bank with most matches
-    if desjardins_count > 0 and desjardins_count >= max(scotia_count, rogers_count):
-        return 'desjardins'
-    elif scotia_count > 0 and scotia_count >= rogers_count:
-        return 'scotia'
-    elif rogers_count > 0:
-        return 'rogers'
-    else:
-        return 'unknown'
+    extractor = TransactionExtractor()
+    results = []
+    successful = 0
+    failed = 0
 
+    for file in files:
+        # Validate file type
+        if not file.filename.lower().endswith('.pdf'):
+            results.append(FileResult(
+                filename=file.filename,
+                bank_type=BankType.UNKNOWN.value,
+                transactions=[],
+                transaction_count=0,
+                error="File must be a PDF",
+            ))
+            failed += 1
+            continue
 
-def extract_transactions_from_pdf(pdf_path, output_dir="extracted_tables"):
-    """
-    Extract transaction data from bank statements by parsing text lines.
-    Better for statements where table detection fails.
-    
-    Args:
-        pdf_path: Path to the PDF file
-        output_dir: Directory to save extracted data
-    
-    Returns:
-        DataFrame with extracted transactions
-    """
-    os.makedirs(output_dir, exist_ok=True)
-    all_transactions = []
-    
-    with pdfplumber.open(pdf_path) as pdf:
-        print(f"Extracting transactions from: {pdf_path}")
-        
-        # First pass: collect all text to extract year and detect bank type
-        all_text_lines = []
-        full_text = ""
-        for page in pdf.pages:
-            text = page.extract_text()
-            if text:
-                all_text_lines.extend(text.split('\n'))
-                full_text += text + "\n"
-        
-        # Detect bank type from content
-        bank_type = detect_bank_type(full_text)
-        print(f"Detected bank type: {bank_type}")
-        
-        # Second pass: extract transactions from each page
-        for page_num, page in enumerate(pdf.pages, start=1):
-            text = page.extract_text()
-            if not text:
-                continue
-            
-            lines = text.split('\n')
-            
-            if bank_type == 'desjardins':
-                # Parse Desjardins format (pass all lines for year extraction)
-                transactions = parse_desjardins_transactions(lines, all_text_lines)
+        # Save uploaded file temporarily
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+                content = await file.read()
+                temp_file.write(content)
+                temp_path = temp_file.name
+
+            # Extract transactions
+            df, bank_type = extractor.extract_with_info(temp_path)
+
+            if df.empty:
+                transactions = []
             else:
-                # Parse Scotia/Rogers/generic format (pass all lines for year extraction)
-                transactions = parse_generic_transactions(lines, all_text_lines)
-            
-            all_transactions.extend(transactions)
-    
-    if all_transactions:
-        df = pd.DataFrame(all_transactions)
-        
-        # Save to CSV
-        base_name = os.path.splitext(os.path.basename(pdf_path))[0]
-        csv_path = os.path.join(output_dir, f"{base_name}_transactions.csv")
-        df.to_csv(csv_path, index=False)
-        print(f"Saved {len(df)} transactions to {csv_path}")
-        
-        return df
-    
-    return pd.DataFrame()
+                transactions = [
+                    TransactionResponse(
+                        date=row["date"],
+                        post_date=row.get("post_date"),
+                        description=row["description"],
+                        amount=row["amount"],
+                    )
+                    for _, row in df.iterrows()
+                ]
+
+            results.append(FileResult(
+                filename=file.filename,
+                bank_type=bank_type.value,
+                transactions=transactions,
+                transaction_count=len(transactions),
+            ))
+            successful += 1
+
+        except Exception as e:
+            results.append(FileResult(
+                filename=file.filename,
+                bank_type=BankType.UNKNOWN.value,
+                transactions=[],
+                transaction_count=0,
+                error=str(e),
+            ))
+            failed += 1
+
+        finally:
+            # Clean up temp file
+            if temp_path and os.path.exists(temp_path):
+                os.unlink(temp_path)
+
+    return ExtractionResponse(
+        total_files=len(files),
+        successful=successful,
+        failed=failed,
+        results=results,
+    )
 
 
-def parse_desjardins_transactions(lines, all_lines=None):
+@app.post("/extract/single", response_model=FileResult)
+async def extract_single_file(file: UploadFile = File(...)):
     """
-    Parse Desjardins bank statement format.
-    
-    Format: J M J M Description BONIDOLLARS% Amount
-    Example: 26 11 26 11 BKG*BOOKING.COM HOTEL (888)850-3958NH 2,00 % 293,23
+    Extract transactions from a single bank statement PDF.
     
     Args:
-        lines: Lines from current page
-        all_lines: All lines from document (for year extraction)
-    """
-    transactions = []
-    
-    # Use all_lines for year extraction if provided, otherwise use current page lines
-    year_search_lines = all_lines if all_lines else lines
-    
-    # Pattern for Desjardins transaction lines
-    # Matches: DD MM DD MM Description [percentage%] Amount
-    desjardins_pattern = re.compile(
-        r'^(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+'  # J M J M (trans date, post date)
-        r'(.+?)\s+'                                            # Description
-        r'([\d,]+(?:,\d{2})?)(?:CR)?$'                         # Amount (with comma decimal)
-    )
-    
-    # Alternative pattern for lines with percentage (BONIDOLLARS)
-    desjardins_pattern_pct = re.compile(
-        r'^(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+'  # J M J M
-        r'(.+?)\s+'                                            # Description
-        r'(\d+,\d{2})\s*%\s+'                                  # Percentage
-        r'([\d\s,]+(?:,\d{2})?)(?:CR)?$'                       # Amount
-    )
-    
-    # Pattern for continuation lines (multiline descriptions like EURO TX:)
-    continuation_pattern = re.compile(r'^[\d,]+\s+(?:EURO|USD|CAD)\s+TX:\s*[\d.]+$')
-    
-    # Extract year from statement
-    # Look for patterns like "Année 2025", "relevé 04 12 2025"
-    current_year = None
-    year_patterns = [
-        r'Année\s+(\d{4})',                          # Année 2025
-        r'relevé\s+\d{1,2}\s+\d{1,2}\s+(\d{4})',     # relevé 04 12 2025
-        r'Date du relevé.*?(\d{4})',                  # Date du relevé ... 2025
-        r'd\'échéance.*?(\d{4})',                     # d'échéance ... 2025
-    ]
-    
-    for line in year_search_lines:
-        if current_year:
-            break
-        for pattern in year_patterns:
-            match = re.search(pattern, line)
-            if match:
-                year_candidate = match.group(1)
-                # Validate it's a reasonable year (2000-2099)
-                if year_candidate.startswith('20'):
-                    current_year = year_candidate
-                    break
-    
-    # Fallback to current year if not found
-    if not current_year:
-        from datetime import datetime
-        current_year = str(datetime.now().year)
-    
-    i = 0
-    
-    while i < len(lines):
-        line = lines[i].strip()
+        file: PDF file to process.
         
-        # Skip header/footer lines
-        if not line or 'TRANSACTIONS' in line or 'Page :' in line or 'Relevé' in line:
-            i += 1
-            continue
-        
-        # Try pattern with percentage first
-        match = desjardins_pattern_pct.match(line)
-        if match:
-            trans_day, trans_month = match.group(1), match.group(2)
-            post_day, post_month = match.group(3), match.group(4)
-            description = match.group(5).strip()
-            amount_str = match.group(7).replace(' ', '').replace(',', '.')
-            
-            # Check for continuation line (currency conversion info)
-            if i + 1 < len(lines):
-                next_line = lines[i + 1].strip()
-                if re.match(r'^[\d,\.]+\s+(?:EURO|USD|CAD)', next_line):
-                    description += ' ' + next_line
-                    i += 1
-            
-            try:
-                amount = float(amount_str)
-                if line.endswith('CR'):
-                    amount = -amount
-                
-                transactions.append({
-                    'date': f"{trans_day}/{trans_month}/{current_year}",
-                    'post_date': f"{post_day}/{post_month}/{current_year}",
-                    'description': description,
-                    'amount': amount
-                })
-            except ValueError:
-                pass
-            
-            i += 1
-            continue
-        
-        # Try basic pattern (without percentage)
-        match = desjardins_pattern.match(line)
-        if match:
-            trans_day, trans_month = match.group(1), match.group(2)
-            post_day, post_month = match.group(3), match.group(4)
-            description = match.group(5).strip()
-            amount_str = match.group(6).replace(' ', '').replace(',', '.')
-            
-            # Check if it's a credit
-            is_credit = line.endswith('CR')
-            
-            # Check for continuation line
-            if i + 1 < len(lines):
-                next_line = lines[i + 1].strip()
-                if re.match(r'^[\d,\.]+\s+(?:EURO|USD|CAD)', next_line):
-                    description += ' ' + next_line
-                    i += 1
-            
-            try:
-                amount = float(amount_str)
-                if is_credit:
-                    amount = -amount
-                
-                transactions.append({
-                    'date': f"{trans_day}/{trans_month}/{current_year}",
-                    'post_date': f"{post_day}/{post_month}/{current_year}",
-                    'description': description,
-                    'amount': amount
-                })
-            except ValueError:
-                pass
-        
-        i += 1
-    
-    return transactions
-
-
-def parse_generic_transactions(lines, all_lines=None):
-    """
-    Parse generic bank statement formats (Scotia, Rogers, etc.).
-    
-    Supports various formats:
-    - Nov 14 Nov 16 Description Amount (Scotia)
-    - Aug23 Aug25 Description Amount (Rogers - no space)
-    - Nov 14 Description Amount (single date)
-    - 001 Nov 14 Nov 16 Description Amount (with ref number - ignored)
-    
-    Args:
-        lines: Lines from current page
-        all_lines: All lines from document (for year extraction)
-    """
-    transactions = []
-    
-    # Use all_lines for year extraction if provided, otherwise use current page lines
-    year_search_lines = all_lines if all_lines else lines
-    
-    # Extract year from statement
-    current_year = None
-    year_patterns = [
-        r'Statement\s*Period.*?(\d{4})',          # Statement Period ... 2025
-        r'StatementPeriod.*?(\d{4})',             # StatementPeriod ... 2025
-        r'[A-Za-z]{3}\s+\d{1,2},?\s*(\d{4})',     # Nov 3, 2025 or Aug 17,2025
-        r'Due\s*Date.*?(\d{4})',                  # Due Date ... 2025
-        r'Paymentduedate.*?(\d{4})',              # Paymentduedate Oct7,2025
-    ]
-    
-    for line in year_search_lines:
-        if current_year:
-            break
-        for pattern in year_patterns:
-            match = re.search(pattern, line)
-            if match:
-                year_candidate = match.group(1)
-                # Validate it's a reasonable year (2000-2099)
-                if year_candidate and year_candidate.startswith('20') and len(year_candidate) == 4:
-                    current_year = year_candidate
-                    break
-    
-    # Fallback to current year if not found
-    if not current_year:
-        from datetime import datetime
-        current_year = str(datetime.now().year)
-    
-    # Pattern for dates with space: Nov 14, Dec 1
-    # Pattern for dates without space: Aug23, Sep2 (Rogers format)
-    
-    # Main pattern: two dates with optional space between month and day
-    transaction_pattern = re.compile(
-        r'^'
-        r'(?:\d{3}\s+)?'                           # Optional ref number (ignored)
-        r'([A-Za-z]{3})\s*(\d{1,2})\s+'            # First date (transaction date)
-        r'([A-Za-z]{3})\s*(\d{1,2})\s+'            # Second date (post date)
-        r'(.+?)\s+'                                 # Description
-        r'\$?([\d,]+\.\d{2})\s*'                   # Amount
-        r'(CR|-)?'                                  # Optional credit indicator
-        r'\s*$'
-    )
-    
-    # Pattern for single date
-    simple_pattern = re.compile(
-        r'^'
-        r'(?:\d{3}\s+)?'                           # Optional ref number (ignored)
-        r'([A-Za-z]{3})\s*(\d{1,2})\s+'            # Date
-        r'(.+?)\s+'                                 # Description
-        r'\$?([\d,]+\.\d{2})\s*'                   # Amount
-        r'(CR|-)?'                                  # Optional credit indicator
-        r'\s*$'
-    )
-    
-    for line in lines:
-        line = line.strip()
-        
-        # Skip empty lines
-        if not line:
-            continue
-        
-        # Skip header/footer lines
-        skip_keywords = [
-            'TRANS', 'Statement', 'Page', 'DATE', 'AMOUNT', 'DESCRIPTION',
-            'Balance', 'TOTAL', 'SUB-TOTAL', 'Interest', 'Account', 'Card',
-            'Rate', 'PURCHASE', 'CASH', 'Daily', 'Annual', 'Charged'
-        ]
-        if any(kw in line for kw in skip_keywords):
-            continue
-        
-        # Try two-date pattern first (transaction date + post date)
-        match = transaction_pattern.match(line)
-        if match:
-            trans_month, trans_day = match.group(1), match.group(2)
-            post_month, post_day = match.group(3), match.group(4)
-            description = match.group(5).strip()
-            amount_str = match.group(6).replace(',', '')
-            is_credit = match.group(7) in ('CR', '-')
-            
-            try:
-                amount = float(amount_str)
-                if is_credit:
-                    amount = -amount
-                
-                transactions.append({
-                    'date': f"{trans_month} {trans_day}, {current_year}",
-                    'post_date': f"{post_month} {post_day}, {current_year}",
-                    'description': description,
-                    'amount': amount
-                })
-            except ValueError:
-                pass
-            continue
-        
-        # Try single-date pattern
-        match = simple_pattern.match(line)
-        if match:
-            trans_month, trans_day = match.group(1), match.group(2)
-            description = match.group(3).strip()
-            amount_str = match.group(4).replace(',', '')
-            is_credit = match.group(5) in ('CR', '-')
-            
-            try:
-                amount = float(amount_str)
-                if is_credit:
-                    amount = -amount
-                
-                transactions.append({
-                    'date': f"{trans_month} {trans_day}, {current_year}",
-                    'post_date': None,
-                    'description': description,
-                    'amount': amount
-                })
-            except ValueError:
-                pass
-    
-    return transactions
-
-
-def process_table(raw_table):
-    """
-    Process raw table data: handle multiline rows, clean cells, and create DataFrame.
-    
-    Args:
-        raw_table: List of lists representing table rows
-    
     Returns:
-        Cleaned pandas DataFrame
+        FileResult with extracted transactions.
     """
-    if not raw_table:
-        return None
-    
-    # Clean individual cells
-    cleaned_rows = []
-    for row in raw_table:
-        cleaned_row = []
-        for cell in row:
-            if cell is None:
-                cleaned_row.append("")
-            else:
-                # Handle multiline cells by joining with space
-                cell_text = str(cell).strip()
-                # Replace newlines with spaces for multiline content
-                cell_text = " ".join(cell_text.split())
-                cleaned_row.append(cell_text)
-        cleaned_rows.append(cleaned_row)
-    
-    if not cleaned_rows:
-        return None
-    
-    # Merge multiline rows (rows that are continuations of previous rows)
-    merged_rows = merge_multiline_rows(cleaned_rows)
-    
-    # Create DataFrame
-    if len(merged_rows) > 1:
-        # Use first row as header
-        df = pd.DataFrame(merged_rows[1:], columns=merged_rows[0])
-    else:
-        df = pd.DataFrame(merged_rows)
-    
-    # Remove completely empty rows and columns
-    df = df.dropna(how='all')
-    df = df.loc[:, (df != '').any(axis=0)]
-    
-    return df
+    if not file.filename.lower().endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="File must be a PDF")
 
+    extractor = TransactionExtractor()
+    temp_path = None
 
-def merge_multiline_rows(rows):
-    """
-    Merge rows that appear to be continuations of previous rows.
-    Bank statements often have transaction descriptions spanning multiple lines.
-    
-    Args:
-        rows: List of row lists
-    
-    Returns:
-        List of merged rows
-    """
-    if not rows:
-        return rows
-    
-    merged = []
-    current_row = None
-    
-    for row in rows:
-        # Check if this row looks like a continuation
-        # (e.g., first cell is empty but others have content, 
-        # or row has fewer non-empty cells than expected)
-        is_continuation = is_continuation_row(row, current_row)
-        
-        if is_continuation and current_row is not None:
-            # Merge with previous row
-            for i, cell in enumerate(row):
-                if i < len(current_row) and cell:
-                    if current_row[i]:
-                        current_row[i] = current_row[i] + " " + cell
-                    else:
-                        current_row[i] = cell
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+            content = await file.read()
+            temp_file.write(content)
+            temp_path = temp_file.name
+
+        df, bank_type = extractor.extract_with_info(temp_path)
+
+        if df.empty:
+            transactions = []
         else:
-            # Start new row
-            if current_row is not None:
-                merged.append(current_row)
-            current_row = row.copy()
-    
-    # Don't forget the last row
-    if current_row is not None:
-        merged.append(current_row)
-    
-    return merged
+            transactions = [
+                TransactionResponse(
+                    date=row["date"],
+                    post_date=row.get("post_date"),
+                    description=row["description"],
+                    amount=row["amount"],
+                )
+                for _, row in df.iterrows()
+            ]
 
+        return FileResult(
+            filename=file.filename,
+            bank_type=bank_type.value,
+            transactions=transactions,
+            transaction_count=len(transactions),
+        )
 
-def is_continuation_row(row, previous_row):
-    """
-    Determine if a row is a continuation of the previous row.
-    
-    Heuristics for bank statements:
-    - First column (usually date) is empty
-    - Last columns (usually amounts) are empty
-    - Only middle columns (description) have content
-    """
-    if previous_row is None:
-        return False
-    
-    if not row or len(row) < 2:
-        return False
-    
-    non_empty_count = sum(1 for cell in row if cell and cell.strip())
-    
-    # If first cell is empty and we have some content, might be continuation
-    first_empty = not row[0] or not row[0].strip()
-    
-    # Check if amount columns (typically last 1-2) are empty
-    last_cols_empty = all(not cell or not cell.strip() for cell in row[-2:]) if len(row) >= 2 else False
-    
-    # Likely continuation if date column empty and amount columns empty
-    # but there's some content in the middle (description)
-    if first_empty and last_cols_empty and non_empty_count > 0:
-        return True
-    
-    # Very sparse row compared to previous might be continuation
-    if non_empty_count <= 1 and non_empty_count < len(row) // 2:
-        return True
-    
-    return False
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
+
 
 if __name__ == "__main__":
-    # Path to the PDF files
-    pdf_files = [
-        "./desjardins_december_2025.pdf",
-        "./scotia_bank_december_2025.pdf",
-        "./rogers_december_2025.pdf"
-    ]
-    
-    for pdf_path in pdf_files:
-        print(f"\n{'='*60}")
-        print(f"Processing: {pdf_path}")
-        print('='*60)
-        
-        # Extract transactions using text parsing
-        print("\n--- Transaction Extraction ---")
-        transactions_df = extract_transactions_from_pdf(pdf_path)
-        
-        if not transactions_df.empty:
-            print("\nExtracted Transactions:")
-            print(transactions_df.to_string())
-    
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
