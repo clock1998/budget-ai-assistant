@@ -33,11 +33,11 @@ vec_version = cursor.fetchone()
 print(f"pgvector_version={vec_version[0] if vec_version else 'not installed'}")
 
 # Drop table if exists
-cursor.execute("DROP TABLE IF EXISTS vec_documents")
+cursor.execute("DROP TABLE IF EXISTS business_vec")
 
 # Create table with vector column (768 dimensions for all-mpnet-base-v2)
 cursor.execute("""
-    CREATE TABLE vec_documents (
+    CREATE TABLE business_vec (
         id SERIAL PRIMARY KEY,
         business_name_embedding vector(768),
         business_name TEXT,
@@ -53,7 +53,7 @@ embeddings = model.encode(businesses['business_name'].tolist())
 for i, row in businesses.iterrows():
     embedding_list = embeddings[i].astype(np.float32).tolist()
     # Insert text into documents
-    cursor.execute('''INSERT INTO vec_documents (
+    cursor.execute('''INSERT INTO business_vec (
                    business_name_embedding,
                    business_name, 
                    business_domain, 
@@ -64,7 +64,7 @@ db.commit()
 
 # Create an index for faster similarity search
 cursor.execute("""
-    CREATE INDEX ON vec_documents USING hnsw (business_name_embedding vector_cosine_ops)
+    CREATE INDEX ON business_vec USING hnsw (business_name_embedding vector_cosine_ops)
 """)
 db.commit()
 
@@ -73,7 +73,7 @@ SELECT
     id,
     business_name,
     business_name_embedding
-FROM vec_documents
+FROM business_vec
 LIMIT 2
 """)
 print(cursor.fetchall())

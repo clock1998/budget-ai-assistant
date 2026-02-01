@@ -14,11 +14,11 @@ db = psycopg2.connect(
 cursor = db.cursor()
 
 # Drop table if exists
-cursor.execute("DROP TABLE IF EXISTS fts_documents")
+cursor.execute("DROP TABLE IF EXISTS business_fts")
 
 # Create table with tsvector column for full-text search
 cursor.execute("""
-    CREATE TABLE fts_documents (
+    CREATE TABLE business_fts (
         id SERIAL PRIMARY KEY,
         business_name TEXT,
         business_domain TEXT,
@@ -30,7 +30,7 @@ db.commit()
 
 # Create GIN index for fast full-text search
 cursor.execute("""
-    CREATE INDEX fts_documents_search_idx ON fts_documents USING GIN (search_vector)
+    CREATE INDEX business_fts_search_idx ON business_fts USING GIN (search_vector)
 """)
 db.commit()
 
@@ -39,7 +39,7 @@ businesses = pd.read_csv('data.csv')
 for i, row in businesses.iterrows():
     # Insert with tsvector generated from business_name, domain, and description
     cursor.execute('''
-        INSERT INTO fts_documents (
+        INSERT INTO business_fts (
             business_name, 
             business_domain, 
             business_niche_description,
@@ -55,7 +55,7 @@ for i, row in businesses.iterrows():
 db.commit()
 
 # Verify data
-cursor.execute("SELECT id, business_name, business_domain FROM fts_documents LIMIT 5")
+cursor.execute("SELECT id, business_name, business_domain FROM business_fts LIMIT 5")
 print("Sample data:")
 for row in cursor.fetchall():
     print(row)
@@ -64,7 +64,7 @@ for row in cursor.fetchall():
 cursor.execute("""
     SELECT id, business_name, business_domain,
            ts_rank(search_vector, query) AS rank
-    FROM fts_documents, plainto_tsquery('english', 'restaurant') query
+    FROM business_fts, plainto_tsquery('english', 'restaurant') query
     WHERE search_vector @@ query
     ORDER BY rank DESC
     LIMIT 5
