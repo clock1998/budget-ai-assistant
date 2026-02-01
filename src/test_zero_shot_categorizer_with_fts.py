@@ -1,3 +1,4 @@
+import os
 import psycopg2
 import numpy as np
 import pandas as pd
@@ -36,11 +37,11 @@ def translate_local(text):
 
 # Connect to PostgreSQL
 conn = psycopg2.connect(
-    host="localhost",
-    port=5432,
-    database="default",
-    user="secret",
-    password="secret"
+    host=os.environ.get("POSTGRES_HOST", "localhost"),
+    port=int(os.environ.get("POSTGRES_PORT", 5432)),
+    database=os.environ.get("POSTGRES_DATABASE", "default"),
+    user=os.environ["POSTGRES_USER"],
+    password=os.environ["POSTGRES_PASSWORD"]
 )
 
 cursor = conn.cursor()
