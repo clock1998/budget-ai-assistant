@@ -1,6 +1,6 @@
-import sqlite3
+import psycopg2
+from pgvector.psycopg2 import register_vector
 import numpy as np
-import sqlite_vec
 import pandas as pd
 from sentence_transformers import SentenceTransformer
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -44,33 +44,41 @@ model = SentenceTransformer(
     model_kwargs={"dtype": "bfloat16"}
 )
 
-db = sqlite3.connect("my_db.db")
+# Connect to PostgreSQL
+conn = psycopg2.connect(
+    host="localhost",
+    port=5432,
+    database="default",
+    user="secret",
+    password="secret"
+)
 
-# Enable loading extensions and load vec0
-db.enable_load_extension(True)
-sqlite_vec.load(db)
-db.enable_load_extension(False)
+cursor = conn.cursor()
+
+# Register pgvector extension
+register_vector(conn)
 
 # Verify installation
-vec_version, = db.execute("select vec_version()").fetchone()
-print(f"vec_version={vec_version}")
+cursor.execute("SELECT extversion FROM pg_extension WHERE extname = 'vector'")
+vec_version = cursor.fetchone()
+print(f"pgvector_version={vec_version[0] if vec_version else 'not installed'}")
 
-cursor = db.cursor()
+embedding = model.encode("MULTI-SERVICES D'ENTRETIEN CARL ST-AMOUR INC", prompt_name="document").astype(np.float32).tolist()
 
-embedding = model.encode("MULTI-SERVICES D'ENTRETIEN CARL ST-AMOUR INC", prompt_name="document").astype(np.float32).tobytes()
-
-results  = cursor.execute("""
-select
-    rowid,
+cursor.execute("""
+SELECT
+    id,
     business_name,
     business_domain,
     business_niche_description,
-    distance
-from vec_documents
-where business_name_embedding match ? and k=5
-order by distance;
-""", (embedding,)).fetchall()
-db.close()
+    business_name_embedding <=> %s::vector AS distance
+FROM vec_documents
+ORDER BY business_name_embedding <=> %s::vector
+LIMIT 5;
+""", (embedding, embedding))
+
+results = cursor.fetchall()
+conn.close()
 
 
 
