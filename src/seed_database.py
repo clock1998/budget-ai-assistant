@@ -1,30 +1,31 @@
 import numpy as np
+import psycopg2
 from pgvector.psycopg2 import register_vector
 import pandas as pd
 from sentence_transformers import SentenceTransformer
 
 model = SentenceTransformer(
-    "Qwen/Qwen3-Embedding-8B", 
-    device="cuda", 
-    model_kwargs={"dtype": "bfloat16"}
+    "sentence-transformers/all-mpnet-base-v2", 
+    device="cuda"
 )
 
 # Connect to PostgreSQL
 conn = psycopg2.connect(
     host="localhost",
-    database="quebec_business",
-    user="postgres",
-    password="postgres"
+    port=5432,
+    database="default",
+    user="secret",
+    password="secret"
 )
-
-# Register pgvector extension
-register_vector(conn)
 
 cursor = conn.cursor()
 
-# Enable pgvector extension
+# Enable pgvector extension (must be done BEFORE registering vector type)
 cursor.execute("CREATE EXTENSION IF NOT EXISTS vector")
 conn.commit()
+
+# Register pgvector extension (after extension is created)
+register_vector(conn)
 
 # Verify installation
 cursor.execute("SELECT extversion FROM pg_extension WHERE extname = 'vector'")
@@ -34,11 +35,11 @@ print(f"pgvector_version={vec_version[0] if vec_version else 'not installed'}")
 # Drop table if exists
 cursor.execute("DROP TABLE IF EXISTS vec_documents")
 
-# Create table with vector column
+# Create table with vector column (768 dimensions for all-mpnet-base-v2)
 cursor.execute("""
     CREATE TABLE vec_documents (
         id SERIAL PRIMARY KEY,
-        business_name_embedding vector(4096),
+        business_name_embedding vector(768),
         business_name TEXT,
         business_domain TEXT,
         business_niche_description TEXT
@@ -47,7 +48,7 @@ cursor.execute("""
 conn.commit()
 
 businesses = pd.read_csv('data.csv')
-embeddings = model.encode(businesses['business_name'].tolist(), prompt_name="document")
+embeddings = model.encode(businesses['business_name'].tolist())
 
 for i, row in businesses.iterrows():
     embedding_list = embeddings[i].astype(np.float32).tolist()
@@ -61,10 +62,9 @@ for i, row in businesses.iterrows():
     
 conn.commit()
 
-# Create an index for faster similarity search (optional but recommended)
+# Create an index for faster similarity search
 cursor.execute("""
-    CREATE INDEX ON vec_documents USING ivfflat (business_name_embedding vector_cosine_ops)
-    WITH (lists = 100)
+    CREATE INDEX ON vec_documents USING hnsw (business_name_embedding vector_cosine_ops)
 """)
 conn.commit()
 
