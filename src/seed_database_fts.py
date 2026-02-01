@@ -44,9 +44,9 @@ for i, row in businesses.iterrows():
             business_niche_description,
             search_vector
         ) VALUES (%s, %s, %s, 
-            setweight(to_tsvector('english', coalesce(%s, '')), 'A') ||
-            setweight(to_tsvector('english', coalesce(%s, '')), 'B') ||
-            setweight(to_tsvector('english', coalesce(%s, '')), 'C')
+            setweight(to_tsvector('french', coalesce(%s, '')), 'A') ||
+            setweight(to_tsvector('french', coalesce(%s, '')), 'B') ||
+            setweight(to_tsvector('french', coalesce(%s, '')), 'C')
         )''',
         (row['business_name'], row['business_domain'], row['business_niche_description'],
          row['business_name'], row['business_domain'], row['business_niche_description']))
