@@ -1,34 +1,77 @@
-import sqlite3
+import psycopg2
 import pandas as pd
 
-db = sqlite3.connect("my_db.db")
+# Connect to PostgreSQL
+conn = psycopg2.connect(
+    host="localhost",
+    port=5432,
+    database="default",
+    user="secret",
+    password="secret"
+)
 
+cursor = conn.cursor()
 
-db.execute("""    
-    DELETE VIRTUAL TABLE IF EXISTS fts_documents;
+# Drop table if exists
+cursor.execute("DROP TABLE IF EXISTS fts_documents")
+
+# Create table with tsvector column for full-text search
+cursor.execute("""
+    CREATE TABLE fts_documents (
+        id SERIAL PRIMARY KEY,
+        business_name TEXT,
+        business_domain TEXT,
+        business_niche_description TEXT,
+        search_vector tsvector
+    )
 """)
+conn.commit()
 
-db.execute("""
-    CREATE VIRTUAL TABLE fts_documents USING 
-               fts5(
-                business_name,
-                business_domain, 
-                business_niche_description,
-                tokenize = 'trigram'
-               );
+# Create GIN index for fast full-text search
+cursor.execute("""
+    CREATE INDEX fts_documents_search_idx ON fts_documents USING GIN (search_vector)
 """)
+conn.commit()
 
 businesses = pd.read_csv('data.csv')
-data = [];
-for i, row in businesses.iterrows():
-    # Insert text into documents
-    data.append((row['business_name'], row['business_domain'], row['business_niche_description']));
 
-db.executemany('''INSERT INTO fts_documents (
-                   business_name, 
-                   business_domain, 
-                   business_niche_description) VALUES (?, ?, ?)'''
-                   , data);    
-db.commit()
-db.close()
+for i, row in businesses.iterrows():
+    # Insert with tsvector generated from business_name, domain, and description
+    cursor.execute('''
+        INSERT INTO fts_documents (
+            business_name, 
+            business_domain, 
+            business_niche_description,
+            search_vector
+        ) VALUES (%s, %s, %s, 
+            setweight(to_tsvector('english', coalesce(%s, '')), 'A') ||
+            setweight(to_tsvector('english', coalesce(%s, '')), 'B') ||
+            setweight(to_tsvector('english', coalesce(%s, '')), 'C')
+        )''',
+        (row['business_name'], row['business_domain'], row['business_niche_description'],
+         row['business_name'], row['business_domain'], row['business_niche_description']))
+
+conn.commit()
+
+# Verify data
+cursor.execute("SELECT id, business_name, business_domain FROM fts_documents LIMIT 5")
+print("Sample data:")
+for row in cursor.fetchall():
+    print(row)
+
+# Example FTS query
+cursor.execute("""
+    SELECT id, business_name, business_domain,
+           ts_rank(search_vector, query) AS rank
+    FROM fts_documents, plainto_tsquery('english', 'restaurant') query
+    WHERE search_vector @@ query
+    ORDER BY rank DESC
+    LIMIT 5
+""")
+print("\nExample FTS search for 'restaurant':")
+for row in cursor.fetchall():
+    print(row)
+
+conn.close()
+
 
