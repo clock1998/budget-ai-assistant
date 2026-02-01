@@ -11,7 +11,7 @@ model = SentenceTransformer(
 )
 
 # Connect to PostgreSQL
-conn = psycopg2.connect(
+db = psycopg2.connect(
     host=os.environ.get("POSTGRES_HOST", "localhost"),
     port=int(os.environ.get("POSTGRES_PORT", 5432)),
     database=os.environ.get("POSTGRES_DATABASE", "default"),
@@ -19,15 +19,10 @@ conn = psycopg2.connect(
     password=os.environ["POSTGRES_PASSWORD"]
 )
 
-cursor = conn.cursor()
+cursor = db.cursor()
 
 # Register pgvector extension
-register_vector(conn)
-
-# Verify installation
-cursor.execute("SELECT extversion FROM pg_extension WHERE extname = 'vector'")
-vec_version = cursor.fetchone()
-print(f"pgvector_version={vec_version[0] if vec_version else 'not installed'}")
+register_vector(db)
 
 embedding = model.encode("LIGN'aasdasdasd PLUS INC", prompt_name="document").astype(np.float32).tolist()
 
@@ -42,4 +37,4 @@ LIMIT 5;
 """, (embedding, embedding))
 
 print(cursor.fetchall())
-conn.close()
+db.close()

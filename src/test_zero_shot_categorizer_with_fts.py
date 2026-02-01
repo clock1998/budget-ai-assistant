@@ -36,7 +36,7 @@ def translate_local(text):
     return response.strip()
 
 # Connect to PostgreSQL
-conn = psycopg2.connect(
+db = psycopg2.connect(
     host=os.environ.get("POSTGRES_HOST", "localhost"),
     port=int(os.environ.get("POSTGRES_PORT", 5432)),
     database=os.environ.get("POSTGRES_DATABASE", "default"),
@@ -44,7 +44,7 @@ conn = psycopg2.connect(
     password=os.environ["POSTGRES_PASSWORD"]
 )
 
-cursor = conn.cursor()
+cursor = db.cursor()
 
 search_term = 'PLOMBERIE CARL ST-AMOUR INC.'
 

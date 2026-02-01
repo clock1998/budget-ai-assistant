@@ -11,7 +11,7 @@ model = SentenceTransformer(
 )
 
 # Connect to PostgreSQL
-conn = psycopg2.connect(
+db = psycopg2.connect(
     host=os.environ.get("POSTGRES_HOST", "localhost"),
     port=int(os.environ.get("POSTGRES_PORT", 5432)),
     database=os.environ.get("POSTGRES_DATABASE", "default"),
@@ -19,14 +19,13 @@ conn = psycopg2.connect(
     password=os.environ["POSTGRES_PASSWORD"]
 )
 
-cursor = conn.cursor()
+cursor = db.cursor()
 
 # Enable pgvector extension (must be done BEFORE registering vector type)
 cursor.execute("CREATE EXTENSION IF NOT EXISTS vector")
-conn.commit()
-
+db.commit()
 # Register pgvector extension (after extension is created)
-register_vector(conn)
+register_vector(db)
 
 # Verify installation
 cursor.execute("SELECT extversion FROM pg_extension WHERE extname = 'vector'")
@@ -46,7 +45,7 @@ cursor.execute("""
         business_niche_description TEXT
     )
 """)
-conn.commit()
+db.commit()
 
 businesses = pd.read_csv('data.csv')
 embeddings = model.encode(businesses['business_name'].tolist())
@@ -61,13 +60,13 @@ for i, row in businesses.iterrows():
                    business_niche_description) VALUES (%s, %s, %s, %s)''',
                    (embedding_list, row['business_name'], row['business_domain'], row['business_niche_description']))
     
-conn.commit()
+db.commit()
 
 # Create an index for faster similarity search
 cursor.execute("""
     CREATE INDEX ON vec_documents USING hnsw (business_name_embedding vector_cosine_ops)
 """)
-conn.commit()
+db.commit()
 
 cursor.execute("""
 SELECT
@@ -78,4 +77,4 @@ FROM vec_documents
 LIMIT 2
 """)
 print(cursor.fetchall())
-conn.close()
+db.close()

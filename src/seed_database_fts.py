@@ -3,7 +3,7 @@ import psycopg2
 import pandas as pd
 
 # Connect to PostgreSQL
-conn = psycopg2.connect(
+db = psycopg2.connect(
     host=os.environ.get("POSTGRES_HOST", "localhost"),
     port=int(os.environ.get("POSTGRES_PORT", 5432)),
     database=os.environ.get("POSTGRES_DATABASE", "default"),
@@ -11,7 +11,7 @@ conn = psycopg2.connect(
     password=os.environ["POSTGRES_PASSWORD"]
 )
 
-cursor = conn.cursor()
+cursor = db.cursor()
 
 # Drop table if exists
 cursor.execute("DROP TABLE IF EXISTS fts_documents")
@@ -26,13 +26,13 @@ cursor.execute("""
         search_vector tsvector
     )
 """)
-conn.commit()
+db.commit()
 
 # Create GIN index for fast full-text search
 cursor.execute("""
     CREATE INDEX fts_documents_search_idx ON fts_documents USING GIN (search_vector)
 """)
-conn.commit()
+db.commit()
 
 businesses = pd.read_csv('data.csv')
 
@@ -52,7 +52,7 @@ for i, row in businesses.iterrows():
         (row['business_name'], row['business_domain'], row['business_niche_description'],
          row['business_name'], row['business_domain'], row['business_niche_description']))
 
-conn.commit()
+db.commit()
 
 # Verify data
 cursor.execute("SELECT id, business_name, business_domain FROM fts_documents LIMIT 5")
@@ -73,6 +73,6 @@ print("\nExample FTS search for 'restaurant':")
 for row in cursor.fetchall():
     print(row)
 
-conn.close()
+db.close()
 
 
