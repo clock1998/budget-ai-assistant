@@ -20,9 +20,10 @@ query = """
            business_domain, 
            business_niche_description,
            ts_rank(search_vector, query) AS rank
-    FROM fts_documents, plainto_tsquery('french', %s) query
+    FROM business_fts, plainto_tsquery('french', %s) query
     WHERE search_vector @@ query
-    ORDER BY rank DESC;
+    ORDER BY rank DESC
+    LIMIT 3;
 """
 
 cursor.execute(query, (search_term,))

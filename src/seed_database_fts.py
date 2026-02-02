@@ -44,32 +44,29 @@ for i, row in businesses.iterrows():
             business_domain, 
             business_niche_description,
             search_vector
-        ) VALUES (%s, %s, %s, 
+        ) VALUES (
+            %s,
+            %s,
+            %s, 
             setweight(to_tsvector('french', coalesce(%s, '')), 'A') ||
             setweight(to_tsvector('french', coalesce(%s, '')), 'B') ||
             setweight(to_tsvector('french', coalesce(%s, '')), 'C')
         )''',
-        (row['business_name'], row['business_domain'], row['business_niche_description'],
-         row['business_name'], row['business_domain'], row['business_niche_description']))
+        (
+            row['business_name'], 
+            row['business_domain'], 
+            row['business_niche_description'],
+            row['business_name'], 
+            row['business_domain'], 
+            row['business_niche_description']
+        )
+    )
 
 db.commit()
 
 # Verify data
 cursor.execute("SELECT id, business_name, business_domain FROM business_fts LIMIT 5")
 print("Sample data:")
-for row in cursor.fetchall():
-    print(row)
-
-# Example FTS query
-cursor.execute("""
-    SELECT id, business_name, business_domain,
-           ts_rank(search_vector, query) AS rank
-    FROM business_fts, plainto_tsquery('english', 'restaurant') query
-    WHERE search_vector @@ query
-    ORDER BY rank DESC
-    LIMIT 5
-""")
-print("\nExample FTS search for 'restaurant':")
 for row in cursor.fetchall():
     print(row)
 
