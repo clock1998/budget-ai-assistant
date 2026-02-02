@@ -9,8 +9,8 @@ from typing import Optional
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from src.extractor import TransactionExtractor
-from src.models import BankType
+from pdf_extractor.extractor import TransactionExtractor
+from pdf_extractor.models import BankType
 
 
 app = FastAPI(

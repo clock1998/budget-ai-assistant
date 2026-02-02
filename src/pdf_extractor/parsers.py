@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Optional
 
-from src.models import Transaction
+from pdf_extractor.models import Transaction
 
 
 class BankParser(ABC):

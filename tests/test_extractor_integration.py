@@ -10,8 +10,8 @@ import pytest
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from models import BankType
-from extractor import TransactionExtractor
+from pdf_extractor.models import BankType
+from pdf_extractor.extractor import TransactionExtractor
 
 
 # Path to project root where PDF files are located

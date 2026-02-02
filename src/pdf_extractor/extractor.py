@@ -10,8 +10,8 @@ import pandas as pd
 import pdfplumber
 from fastapi import UploadFile
 
-from src.models import BankType, Transaction
-from src.parsers import DesjardinsParser, GenericParser
+from pdf_extractor.models import BankType, Transaction
+from pdf_extractor.parsers import DesjardinsParser, GenericParser
 
 
 class TransactionExtractor:
