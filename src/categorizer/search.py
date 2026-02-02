@@ -71,6 +71,7 @@ cursor.execute("""
     LIMIT 3;
 """, (search_term,))
 results = cursor.fetchall()
+print(results)
 if(results == []):
     # Register pgvector extension
     register_vector(db)

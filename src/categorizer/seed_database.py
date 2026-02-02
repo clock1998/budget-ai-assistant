@@ -55,9 +55,7 @@ for i, row in businesses.iterrows():
             %s,
             %s,
             %s, 
-            setweight(to_tsvector('french', coalesce(%s, '')), 'A') ||
-            setweight(to_tsvector('french', coalesce(%s, '')), 'B') ||
-            setweight(to_tsvector('french', coalesce(%s, '')), 'C'),
+            setweight(to_tsvector('french', coalesce(%s, '')), 'A'),
             %s
         )''',
         (
@@ -65,8 +63,6 @@ for i, row in businesses.iterrows():
             row['business_domain'], 
             row['business_niche_description'],
             row['business_name'], 
-            row['business_domain'], 
-            row['business_niche_description'],
             embedding_list
         )
     )
