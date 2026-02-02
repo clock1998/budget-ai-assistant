@@ -38,7 +38,7 @@ class FileResult(BaseModel):
     error: Optional[str] = None
 
 
-class ExtractionResponse(BaseModel):
+class Response(BaseModel):
     """Response model for extraction endpoint."""
     total_files: int
     successful: int
@@ -46,7 +46,7 @@ class ExtractionResponse(BaseModel):
     results: list[FileResult]
 
 
-@app.post("/extract", response_model=ExtractionResponse)
+@app.post("/extract", response_model=Response)
 async def extract_transactions(files: list[UploadFile] = File(...)):
     """
     Extract transactions from uploaded bank statement PDFs.
@@ -55,7 +55,7 @@ async def extract_transactions(files: list[UploadFile] = File(...)):
         files: List of PDF files to process.
         
     Returns:
-        ExtractionResponse with transactions from all files.
+        Response with transactions from all files.
     """
     extractor = TransactionExtractor()
     results = []
@@ -92,7 +92,8 @@ async def extract_transactions(files: list[UploadFile] = File(...)):
                     )
                     for _, row in df.iterrows()
                 ]
-
+                # TODO: Integrate with search.py for categorization
+                # 
             results.append(FileResult(
                 filename=file.filename,
                 bank_type=bank_type.value,
@@ -111,7 +112,7 @@ async def extract_transactions(files: list[UploadFile] = File(...)):
             ))
             failed += 1
 
-    return ExtractionResponse(
+    return Response(
         total_files=len(files),
         successful=successful,
         failed=failed,
