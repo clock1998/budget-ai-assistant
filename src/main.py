@@ -26,6 +26,7 @@ class TransactionResponse(BaseModel):
     post_date: Optional[str]
     description: str
     amount: float
+    category: Optional[str] = None
 
 
 class FileResult(BaseModel):
@@ -87,6 +88,7 @@ async def extract_transactions(files: list[UploadFile] = File(...)):
                         post_date=row.get("post_date"),
                         description=row["description"],
                         amount=row["amount"],
+                        category=row.get("category"),
                     )
                     for _, row in df.iterrows()
                 ]
