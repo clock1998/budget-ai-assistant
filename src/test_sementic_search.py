@@ -23,15 +23,15 @@ cursor = db.cursor()
 
 # Register pgvector extension
 register_vector(db)
-
-embedding = model.encode("LIGN'aasdasdasd PLUS INC", prompt_name="document").astype(np.float32).tolist()
+search_term = 'PLOMBERIE CARL ST-AMOUR INC.'
+embedding = model.encode(search_term, prompt_name="document").astype(np.float32).tolist()
 
 cursor.execute("""
 SELECT
     id,
     business_name,
     business_name_embedding <=> %s::vector AS distance
-FROM vec_documents
+FROM business
 ORDER BY business_name_embedding <=> %s::vector
 LIMIT 5;
 """, (embedding, embedding))

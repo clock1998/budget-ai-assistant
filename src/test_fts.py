@@ -19,9 +19,9 @@ query = """
     SELECT business_name,
            business_domain, 
            business_niche_description,
-           ts_rank(search_vector, query) AS rank
-    FROM business_fts, plainto_tsquery('french', %s) query
-    WHERE search_vector @@ query
+           ts_rank(fts_vector, query) AS rank
+    FROM business, plainto_tsquery('french', %s) query
+    WHERE fts_vector @@ query
     ORDER BY rank DESC
     LIMIT 3;
 """
