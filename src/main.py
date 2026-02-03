@@ -5,12 +5,13 @@ FastAPI endpoints for extracting transactions from bank statement PDFs.
 """
 import uvicorn
 from typing import Optional
-
+ 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from pdf_extractor.extractor import TransactionExtractor
 from pdf_extractor.models import BankType
+from src.categorizer.transaction_categorizer import TransactionCategorizer
 
 
 app = FastAPI(
@@ -88,12 +89,17 @@ async def extract_transactions(files: list[UploadFile] = File(...)):
                         post_date=row.get("post_date"),
                         description=row["description"],
                         amount=row["amount"],
-                        category=row.get("category"),
                     )
                     for _, row in df.iterrows()
                 ]
-                # TODO: Integrate with search.py for categorization
+                # TODO: Integrate with search_categorize.py for categorization
                 # 
+                categorizer = TransactionCategorizer()
+                for transaction in transactions:
+                    category = categorizer.categorize(transaction.description)
+                    if category:
+                        transaction.category = category["category"]
+
             results.append(FileResult(
                 filename=file.filename,
                 bank_type=bank_type.value,
