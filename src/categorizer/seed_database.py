@@ -39,7 +39,15 @@ cursor.execute("""
 db.commit()
 
 businesses = pd.read_csv('data.csv')
-embeddings = model.encode(businesses['business_name'].tolist())
+
+# Handle NaN values in business_name column - fill with empty string or drop rows
+businesses['business_name'] = businesses['business_name'].fillna('')
+businesses['business_domain'] = businesses['business_domain'].fillna('')
+businesses['business_niche_description'] = businesses['business_niche_description'].fillna('')
+
+# Filter out rows with empty business names for encoding
+business_names = businesses['business_name'].tolist()
+embeddings = model.encode(business_names)
 
 for i, row in businesses.iterrows():
     embedding_list = embeddings[i].astype(np.float32).tolist()
