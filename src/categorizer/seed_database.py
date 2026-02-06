@@ -16,7 +16,7 @@ CHUNK_SIZE = 10000  # Number of rows to process at a time
 DB_COMMIT_BATCH = 1000  # Commit to DB every N rows
 # Connect to PostgreSQL
 db = psycopg2.connect(
-    host=os.environ.get("POSTGRES_HOST", "localhost"),
+    host=os.environ["POSTGRES_HOST"],
     port=int(os.environ.get("POSTGRES_PORT", 5432)),
     database=os.environ.get("POSTGRES_DATABASE", "default"),
     user=os.environ["POSTGRES_USER"],
