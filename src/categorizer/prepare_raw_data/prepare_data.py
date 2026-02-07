@@ -1,16 +1,18 @@
 import pandas as pd
 import numpy as np
 from sentence_transformers import SentenceTransformer
+from sentence_transformers.quantization import quantize_embeddings
 from tqdm import tqdm
 
+task = "retrieval.query"
 model = SentenceTransformer(
-    "sentence-transformers/all-mpnet-base-v2", 
-    device="cuda"
+    "jinaai/jina-embeddings-v3", 
+    trust_remote_code=True
 )
 
 # Configuration
 BATCH_SIZE = 2048  # Batch size for embedding generation
-CHUNK_SIZE = 50000  # Number of rows to process at a time (RAM-friendly)
+CHUNK_SIZE = 100000  # Number of rows to process at a time (RAM-friendly)
 INPUT_FILE = 'data.csv'
 OUTPUT_FILE = 'data_with_embeddings.csv'
 
@@ -36,14 +38,20 @@ for chunk_num, businesses in enumerate(tqdm(chunk_iterator, total=(total_rows //
     print(f"Generating embeddings for {len(business_names)} items...")
     embeddings = model.encode(
         business_names,
+        task=task,
+        prompt_name=task,
         batch_size=BATCH_SIZE,
         show_progress_bar=True,
-        convert_to_numpy=True
+        convert_to_numpy=True,
+        truncate_dim=128
     )
 
-    # Convert embeddings to list format and add as column
+    # Apply binary quantization to reduce storage and speed up search
+    binary_embeddings = quantize_embeddings(embeddings, precision="binary")
+
+    # Convert binary embeddings to list format and add as column
     businesses['business_name_embedding'] = [
-        emb.astype(np.float32).tolist() for emb in embeddings
+        ''.join(format(byte, '08b') for byte in emb.tobytes()) for emb in binary_embeddings
     ]
 
     # Save to CSV (append mode after first chunk)
