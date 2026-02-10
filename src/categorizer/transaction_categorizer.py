@@ -2,7 +2,7 @@ import os
 import psycopg2
 import numpy as np
 from pgvector.psycopg2 import register_vector
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer, quantize_embeddings
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 
 
@@ -34,7 +34,7 @@ class TransactionCategorizer:
     
     def __init__(
         self,
-        embedding_model_name: str = "sentence-transformers/all-mpnet-base-v2",
+        embedding_model_name: str = "jinaai/jina-embeddings-v3",
         translation_model_name: str = "Qwen/Qwen3-4B-Instruct-2507",
         classifier_model_name: str = "MoritzLaurer/deberta-v3-large-zeroshot-v2.0",
         device: str = "cuda"
@@ -45,10 +45,11 @@ class TransactionCategorizer:
         # Load embedding model
         self.embedding_model = SentenceTransformer(
             embedding_model_name,
-            device=device,
-            model_kwargs={"dtype": "bfloat16"}
+            device="cuda",
+            trust_remote_code=True,
+            truncate_dim=128
         )
-        
+                
         # Load translation model and tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(translation_model_name)
         self.translation_model = AutoModelForCausalLM.from_pretrained(translation_model_name)
@@ -133,22 +134,24 @@ class TransactionCategorizer:
         """Search using semantic vector similarity."""
         _, cursor = self._get_db_connection()
         
-        embedding = self.embedding_model.encode(
-            search_term,
-            prompt_name="document"
-        ).astype(np.float32).tolist()
-        
+        float_embedding = self.embedding_model.encode(search_term, task="retrieval.query")
+        binary_embedding = quantize_embeddings(
+            float_embedding.reshape(1, -1), precision="binary"
+        )
+        # Convert to bit string for PostgreSQL bit type
+        binary_bits = ''.join(format(byte, '08b') for byte in binary_embedding.tobytes())
+
         cursor.execute("""
-            SELECT
-                id,
-                business_name,
-                business_domain, 
-                business_niche_description,
-                business_name_embedding <=> %s::vector AS distance
-            FROM business
-            ORDER BY business_name_embedding <=> %s::vector
-            LIMIT %s;
-        """, (embedding, embedding, limit))
+        SELECT
+            id,
+            business_name,
+            business_domain, 
+            business_niche_description,
+            business_name_embedding <~> %s::bit(128) AS hamming_distance
+        FROM business
+        ORDER BY business_name_embedding <~> %s::bit(128)
+        LIMIT %s;
+        """, (binary_bits, binary_bits, limit))
         
         return cursor.fetchall()
     
@@ -160,16 +163,6 @@ class TransactionCategorizer:
             results = self.search_semantic(search_term, limit)
         
         return results
-    
-    def classify_category(self, text: str) -> dict:
-        """Classify text into a budget category using zero-shot classification."""
-        output = self.zeroshot_classifier(
-            text,
-            self.BUDGET_CATEGORIES,
-            hypothesis_template=self.HYPOTHESIS_TEMPLATE,
-            multi_label=False
-        )
-        return output
     
     def categorize(self, search_term: str) -> dict | None:
         """
@@ -193,7 +186,12 @@ class TransactionCategorizer:
             business_name, business_domain = results[0][1], results[0][2]
         
         translated_business = self.translate_to_english(f"{business_name}, {business_domain}")
-        classification = self.classify_category(translated_business)
+        classification = self.zeroshot_classifier(
+            translated_business,
+            self.BUDGET_CATEGORIES,
+            hypothesis_template=self.HYPOTHESIS_TEMPLATE,
+            multi_label=False
+        )
         
         return {
             "category": classification["labels"][0],
