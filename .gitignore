@@ -208,3 +208,4 @@ __marimo__/
 *.pdf
 extracted_tables/*
 data_with_embeddings.csv
+data.csv
