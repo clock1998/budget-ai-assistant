@@ -12,7 +12,7 @@ db = psycopg2.connect(
 
 cursor = db.cursor()
 
-search_term = 'PLOMBERIE CARL ST-AMOUR INC.'
+search_term = 'Marché C & T'
 
 # PostgreSQL FTS query with ranking
 query = """
@@ -20,7 +20,7 @@ query = """
            business_domain, 
            business_niche_description,
            ts_rank(fts_vector, query) AS rank
-    FROM business, plainto_tsquery('french', %s) query
+    FROM business, websearch_to_tsquery('simple', 'Marché C&T') query
     WHERE fts_vector @@ query
     ORDER BY rank DESC
     LIMIT 3;

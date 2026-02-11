@@ -61,10 +61,10 @@ print(f"Imported {count} rows")
 print("Updating fts_vector column...")
 cursor.execute("ALTER TABLE business ADD COLUMN fts_vector tsvector")
 cursor.execute("""
-    UPDATE business SET fts_vector =
-        to_tsvector('simple',
-            coalesce(business_name, '')
-        )
+    UPDATE business 
+    SET fts_vector = 
+    setweight(to_tsvector('simple', coalesce(business_name, '')), 'A') || 
+    setweight(to_tsvector('french', coalesce(business_name, '')), 'B') 
 """)
 db.commit()
 

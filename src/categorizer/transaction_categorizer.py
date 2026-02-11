@@ -10,7 +10,7 @@ class TransactionCategorizer:
     """Categorizes business transactions using search and zero-shot classification."""
     
     BUDGET_CATEGORIES = [
-        'Groceries & Supermarkets',
+        'Groceries (Food, Supermarkets, Markets)',
         'Dining & Restaurants',
         'Fast Food & Coffee Shops',
         'Gas & Fuel',
@@ -20,7 +20,7 @@ class TransactionCategorizer:
         'Entertainment (Movies, Events, Hobbies)',
         'Streaming & Digital Subscriptions',
         'Health & Wellness (Gym, Pharmacy, Copays)',
-        'Shopping & Department Stores',
+        'Retail Shopping (Clothing, Goods, NOT food)',
         'Home Improvement & Decor',
         'Automotive (Parts & Service)',
         'Personal Care (Salon, Barber, Spa)',
@@ -35,7 +35,7 @@ class TransactionCategorizer:
     def __init__(
         self,
         embedding_model_name: str = "jinaai/jina-embeddings-v3",
-        translation_model_name: str = "Qwen/Qwen3-4B-Instruct-2507",
+        translation_model_name: str = "Qwen/Qwen2.5-1.5B-Instruct",
         classifier_model_name: str = "MoritzLaurer/deberta-v3-large-zeroshot-v2.0",
         device: str = "cuda"
     ):
@@ -122,7 +122,7 @@ class TransactionCategorizer:
                 business_domain, 
                 business_niche_description,
                 ts_rank(fts_vector, query) AS rank
-            FROM business, plainto_tsquery('french', %s) query
+            FROM business, websearch_to_tsquery('simple', %s) query
             WHERE fts_vector @@ query
             ORDER BY rank DESC
             LIMIT %s;
@@ -186,6 +186,7 @@ class TransactionCategorizer:
             business_name, business_domain = results[0][1], results[0][2]
         
         translated_business = self.translate_to_english(f"{business_name}, {business_domain}")
+        print(translated_business)
         classification = self.zeroshot_classifier(
             translated_business,
             self.BUDGET_CATEGORIES,
@@ -215,7 +216,7 @@ class TransactionCategorizer:
 if __name__ == "__main__":
     # Example usage
     with TransactionCategorizer() as categorizer:
-        search_term = 'PLOMBERIE CARL ST-AMOUR INC.'
+        search_term = 'Marché C&T'
         result = categorizer.categorize(search_term)
         
         if result:

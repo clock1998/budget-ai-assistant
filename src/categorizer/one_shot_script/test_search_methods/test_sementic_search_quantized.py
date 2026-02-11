@@ -25,7 +25,7 @@ cursor = db.cursor()
 
 # Register pgvector extension
 register_vector(db)
-search_term = 'PLOMBERIE CARL ST-AMOUR INC.'
+search_term = 'Marché C&T'
 
 # Generate float embedding, then binary quantize it
 float_embedding = model.encode(search_term, task="retrieval.query")
