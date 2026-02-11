@@ -10,24 +10,24 @@ class TransactionCategorizer:
     """Categorizes business transactions using search and zero-shot classification."""
     
     BUDGET_CATEGORIES = [
-        'Groceries (Food, Supermarkets, Markets)',
-        'Dining & Restaurants',
-        'Fast Food & Coffee Shops',
-        'Gas & Fuel',
-        'Travel (Airfare, Hotels, Car Rentals)',
-        'Transit (Rideshare, Trains, Tolls)',
-        'Bills & Utilities (Recurring)',
-        'Entertainment (Movies, Events, Hobbies)',
-        'Streaming & Digital Subscriptions',
-        'Health & Wellness (Gym, Pharmacy, Copays)',
-        'Retail Shopping (Clothing, Goods, NOT food)',
-        'Home Improvement & Decor',
-        'Automotive (Parts & Service)',
-        'Personal Care (Salon, Barber, Spa)',
-        'Professional Services (Legal, Tax, Business)',
-        'Insurance Premiums',
-        'Charity & Donations',
-        'Miscellaneous & Fees'
+        'Groceries & Food Supermarkets',
+        'Dining, Restaurants & Sit-down Meals',
+        'Fast Food, Coffee Shops & Quick Bites',
+        'Gas Stations & Vehicle Fuel',
+        'Travel (Airfare, Hotels, Lodging, Car Rentals)',
+        'Public Transit (Rideshare, Trains, Tolls, Parking)',
+        'Bills & Monthly Utilities (Electric, Water, Internet)',
+        'Entertainment (Movies, Events, Hobbies, Parks)',
+        'Streaming Services & Digital Subscriptions',
+        'Health & Wellness (Pharmacy, Gym, Doctor Copays)',
+        'General Shopping (Clothing, Electronics, Non-Food Retail)',
+        'Home Improvement, Hardware & Decor',
+        'Automotive (Repairs, Maintenance, Parts)',
+        'Personal Care (Barber, Hair Salon, Spa, Nails)',
+        'Professional Services (Legal, Accounting, Business)',
+        'Insurance Premiums (Auto, Home, Health)',
+        'Charity, Donations & Non-Profits',
+        'Bank Fees & Miscellaneous Charges'
     ]
     
     HYPOTHESIS_TEMPLATE = "This description of a business domain or activity is in {} budget category."
