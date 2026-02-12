@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from pdf_extractor.extractor import TransactionExtractor
 from pdf_extractor.models import BankType
-from src.categorizer.transaction_categorizer import TransactionCategorizer
+from categorizer.transaction_categorizer import TransactionCategorizer
 
 
 app = FastAPI(
