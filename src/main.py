@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from pdf_extractor.extractor import TransactionExtractor
 from pdf_extractor.models import BankType
-from categorizer.transaction_categorizer import TransactionCategorizer
+from categorizer.transaction_categorizer import TransactionCategorizer, DEFAULT_BUDGET_CATEGORIES
 
 
 app = FastAPI(
@@ -48,12 +48,16 @@ class Response(BaseModel):
 
 
 @app.post("/extract", response_model=Response)
-async def extract_transactions(files: list[UploadFile] = File(...)):
+async def extract_transactions(
+    files: list[UploadFile] = File(...),
+    categories: list[str] = DEFAULT_BUDGET_CATEGORIES,
+):
     """
     Extract transactions from uploaded bank statement PDFs.
     
     Args:
         files: List of PDF files to process.
+        categories: List of budget categories for classification. Defaults to DEFAULT_BUDGET_CATEGORIES.
         
     Returns:
         Response with transactions from all files.
@@ -92,9 +96,7 @@ async def extract_transactions(files: list[UploadFile] = File(...)):
                     )
                     for _, row in df.iterrows()
                 ]
-                # TODO: Integrate with search_categorize.py for categorization
-                # 
-                categorizer = TransactionCategorizer()
+                categorizer = TransactionCategorizer(categories=categories)
                 for transaction in transactions:
                     category = categorizer.categorize(transaction.description)
                     if category:
@@ -127,12 +129,16 @@ async def extract_transactions(files: list[UploadFile] = File(...)):
 
 
 @app.post("/extract/single", response_model=FileResult)
-async def extract_single_file(file: UploadFile = File(...)):
+async def extract_single_file(
+    file: UploadFile = File(...),
+    categories: list[str] = DEFAULT_BUDGET_CATEGORIES,
+):
     """
     Extract transactions from a single bank statement PDF.
     
     Args:
         file: PDF file to process.
+        categories: List of budget categories for classification. Defaults to DEFAULT_BUDGET_CATEGORIES.
         
     Returns:
         FileResult with extracted transactions.
@@ -157,6 +163,12 @@ async def extract_single_file(file: UploadFile = File(...)):
                 )
                 for _, row in df.iterrows()
             ]
+
+            categorizer = TransactionCategorizer(categories=categories)
+            for transaction in transactions:
+                category = categorizer.categorize(transaction.description)
+                if category:
+                    transaction.category = category["category"]
 
         return FileResult(
             filename=file.filename,

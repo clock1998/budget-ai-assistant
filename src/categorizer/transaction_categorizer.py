@@ -4,31 +4,45 @@ import numpy as np
 from pgvector.psycopg2 import register_vector
 from sentence_transformers import SentenceTransformer, quantize_embeddings
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
+from ddgs import DDGS
+
+
+DEFAULT_BUDGET_CATEGORIES = [
+    "Groceries and Supermarkets",
+    "Restaurants and Dining",
+    "Fast Food and Coffee Shops",
+    "Rent and Mortgage Payments",
+    "Utilities and Monthly Bills",
+    "Phone and Internet Services",
+    "Gas Stations and Automotive Fuel",
+    "Public Transit and Rideshare",
+    "Airfare and Hotel Travel",
+    "Clothing and Fashion Accessories",
+    "Department Stores and Big Box Retailers",  # Walmart, Target, Costco
+    "Online Marketplaces and E-commerce",      # Amazon, eBay, Etsy
+    "Electronics and Computer Hardware",       # Apple, Best Buy, Newegg
+    "Home Improvement and Hardware Stores",    # Home Depot, Lowe's, IKEA
+    "Clothing, Apparel, and Footwear",         # Nike, Zara, Gap
+    "Books, Hobby, and Stationery",            # Barnes & Noble, Michaels
+    "Health, Beauty, and Drugstores",          # CVS, Walgreens, Sephora
+    "Pet Supplies and Veterinary Services",    # Chewy, Petco
+    "Sporting Goods and Outdoor Gear",         # REI, Dick's Sporting Goods
+    "Discount and Variety Stores",             # Dollar General, Five Below
+    "Household Goods and Furniture",
+    "Health, Pharmacy, and Medical",
+    "Fitness, Gyms, and Sports",
+    "Entertainment, Streaming, and Movies",
+    "Personal Care, Beauty, and Barber",
+    "Insurance and Financial Services",
+    "Education and Learning",
+    "Government Fees and Taxes",
+    "Charity and Donations",
+    "Uncategorized or Miscellaneous"
+]
 
 
 class TransactionCategorizer:
     """Categorizes business transactions using search and zero-shot classification."""
-    
-    BUDGET_CATEGORIES = [
-        'Groceries & Food Supermarkets',
-        'Dining, Restaurants & Sit-down Meals',
-        'Fast Food, Coffee Shops & Quick Bites',
-        'Gas Stations & Vehicle Fuel',
-        'Travel (Airfare, Hotels, Lodging, Car Rentals)',
-        'Public Transit (Rideshare, Trains, Tolls, Parking)',
-        'Bills & Monthly Utilities (Electric, Water, Internet)',
-        'Entertainment (Movies, Events, Hobbies, Parks)',
-        'Streaming Services & Digital Subscriptions',
-        'Health & Wellness (Pharmacy, Gym, Doctor Copays)',
-        'General Shopping (Clothing, Electronics, Non-Food Retail)',
-        'Home Improvement, Hardware & Decor',
-        'Automotive (Repairs, Maintenance, Parts)',
-        'Personal Care (Barber, Hair Salon, Spa, Nails)',
-        'Professional Services (Legal, Accounting, Business)',
-        'Insurance Premiums (Auto, Home, Health)',
-        'Charity, Donations & Non-Profits',
-        'Bank Fees & Miscellaneous Charges'
-    ]
     
     HYPOTHESIS_TEMPLATE = "This description of a business domain or activity is in {} budget category."
     
@@ -37,10 +51,20 @@ class TransactionCategorizer:
         embedding_model_name: str = "jinaai/jina-embeddings-v3",
         translation_model_name: str = "Qwen/Qwen2.5-1.5B-Instruct",
         classifier_model_name: str = "MoritzLaurer/deberta-v3-large-zeroshot-v2.0",
+        categories: list[str] | None = None,
         device: str = "cuda"
     ):
-        """Initialize the categorizer with required models."""
+        """Initialize the categorizer with required models.
+        
+        Args:
+            embedding_model_name: Name of the sentence-transformer embedding model.
+            translation_model_name: Name of the translation model.
+            classifier_model_name: Name of the zero-shot classification model.
+            categories: List of budget categories for classification. Uses DEFAULT_BUDGET_CATEGORIES if None.
+            device: Device to run models on.
+        """
         self.device = device
+        self.categories = categories if categories is not None else DEFAULT_BUDGET_CATEGORIES
         
         # Load embedding model
         self.embedding_model = SentenceTransformer(
@@ -149,9 +173,10 @@ class TransactionCategorizer:
             business_niche_description,
             business_name_embedding <~> %s::bit(128) AS hamming_distance
         FROM business
+        WHERE business_name_embedding <~> %s::bit(128) < 17
         ORDER BY business_name_embedding <~> %s::bit(128)
         LIMIT %s;
-        """, (binary_bits, binary_bits, limit))
+        """, (binary_bits, binary_bits, binary_bits, limit))
         
         return cursor.fetchall()
     
@@ -163,7 +188,35 @@ class TransactionCategorizer:
             results = self.search_semantic(search_term, limit)
         
         return results
-    
+
+    def search_ddgs(self, search_term: str, max_results: int = 3) -> str | None:
+        """Search for a business using DuckDuckGo and return a short description.
+        
+        Args:
+            search_term: The business name to search for.
+            max_results: Maximum number of search results to consider.
+            
+        Returns:
+            A short description of the business, or None if nothing found.
+        """
+        try:
+            with DDGS() as ddgs:
+                results = list(ddgs.text(f"{search_term} business", max_results=max_results))
+            
+            if not results:
+                return None
+            
+            # Combine the top result snippets into a concise description
+            snippets = [r.get("body", "") for r in results if r.get("body")]
+            if not snippets:
+                return None
+            
+            # Use the first snippet as the primary description
+            return snippets[0] + " " + " ".join(snippets[1:])  # Combine with others for more context 
+        except Exception as e:
+            print(f"DDGS search failed for '{search_term}': {e}")
+            return None
+
     def categorize(self, search_term: str) -> dict | None:
         """
         Main method to categorize a transaction.
@@ -176,20 +229,46 @@ class TransactionCategorizer:
         """
         results = self.search_business(search_term)
         
-        if not results:
+        if results:
+            # Extract business info (handle both FTS and semantic search result formats)
+            if len(results[0]) == 4:  # FTS result
+                business_name, business_domain = results[0][0], results[0][1]
+            else:  # Semantic search result (has id as first column)
+                business_name, business_domain = results[0][1], results[0][2]
+
+            distance_info = results[0][-1]  # Could be rank or hamming distance 
+            print(distance_info)
+            translated_business = self.translate_to_english(f"{business_name}, {business_domain}")
+            classification = self.zeroshot_classifier(
+                translated_business,
+                self.categories,
+                hypothesis_template=self.HYPOTHESIS_TEMPLATE,
+                multi_label=False
+            )
+            
+            return {
+                "category": classification["labels"][0],
+                "confidence": classification["scores"][0],
+                "all_labels": classification["labels"],
+                "all_scores": classification["scores"],
+                "matched_business": business_name,
+                "business_domain": business_domain,
+                "translated_text": translated_business,
+                "source": "database"
+            }
+        
+        # Fallback: search the business on the internet via DuckDuckGo
+        ddgs_description = self.search_ddgs(search_term)
+        
+        if not ddgs_description:
             return None
         
-        # Extract business info (handle both FTS and semantic search result formats)
-        if len(results[0]) == 4:  # FTS result
-            business_name, business_domain = results[0][0], results[0][1]
-        else:  # Semantic search result (has id as first column)
-            business_name, business_domain = results[0][1], results[0][2]
+        translated_description = self.translate_to_english(ddgs_description)
+        print(f"DDGS fallback for '{search_term}': {translated_description}")
         
-        translated_business = self.translate_to_english(f"{business_name}, {business_domain}")
-        print(translated_business)
         classification = self.zeroshot_classifier(
-            translated_business,
-            self.BUDGET_CATEGORIES,
+            translated_description,
+            self.categories,
             hypothesis_template=self.HYPOTHESIS_TEMPLATE,
             multi_label=False
         )
@@ -199,9 +278,10 @@ class TransactionCategorizer:
             "confidence": classification["scores"][0],
             "all_labels": classification["labels"],
             "all_scores": classification["scores"],
-            "matched_business": business_name,
-            "business_domain": business_domain,
-            "translated_text": translated_business
+            "matched_business": search_term,
+            "business_domain": ddgs_description,
+            "translated_text": translated_description,
+            "source": "ddgs"
         }
     
     def __enter__(self):
@@ -216,7 +296,7 @@ class TransactionCategorizer:
 if __name__ == "__main__":
     # Example usage
     with TransactionCategorizer() as categorizer:
-        search_term = 'Marché C&T'
+        search_term = 'Esso'
         result = categorizer.categorize(search_term)
         
         if result:
