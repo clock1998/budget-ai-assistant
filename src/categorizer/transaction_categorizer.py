@@ -6,7 +6,6 @@ from sentence_transformers import SentenceTransformer, quantize_embeddings
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 from ddgs import DDGS
 
-
 DEFAULT_BUDGET_CATEGORIES = [
     "Groceries and Supermarkets",
     "Restaurants and Dining",
@@ -36,8 +35,7 @@ DEFAULT_BUDGET_CATEGORIES = [
     "Insurance and Financial Services",
     "Education and Learning",
     "Government Fees and Taxes",
-    "Charity and Donations",
-    "Uncategorized or Miscellaneous"
+    "Charity and Donations"
 ]
 
 
@@ -173,21 +171,12 @@ class TransactionCategorizer:
             business_niche_description,
             business_name_embedding <~> %s::bit(128) AS hamming_distance
         FROM business
-        WHERE business_name_embedding <~> %s::bit(128) < 17
+        WHERE business_name_embedding <~> %s::bit(128) < 14
         ORDER BY business_name_embedding <~> %s::bit(128)
         LIMIT %s;
         """, (binary_bits, binary_bits, binary_bits, limit))
         
         return cursor.fetchall()
-    
-    def search_business(self, search_term: str, limit: int = 3) -> list:
-        """Search for business using FTS first, then fallback to semantic search."""
-        results = self.search_fts(search_term, limit)
-        
-        if not results:
-            results = self.search_semantic(search_term, limit)
-        
-        return results
 
     def search_ddgs(self, search_term: str, max_results: int = 3) -> str | None:
         """Search for a business using DuckDuckGo and return a short description.
@@ -201,7 +190,7 @@ class TransactionCategorizer:
         """
         try:
             with DDGS() as ddgs:
-                results = list(ddgs.text(f"{search_term} business", max_results=max_results))
+                results = list(ddgs.text(f"{search_term} business", max_results=max_results, backend = "google"))
             
             if not results:
                 return None
@@ -212,7 +201,9 @@ class TransactionCategorizer:
                 return None
             
             # Use the first snippet as the primary description
-            return snippets[0] + " " + " ".join(snippets[1:])  # Combine with others for more context 
+
+            print(f"DDGS results for '{snippets[0]}'")
+            return snippets[0]
         except Exception as e:
             print(f"DDGS search failed for '{search_term}': {e}")
             return None
@@ -221,68 +212,85 @@ class TransactionCategorizer:
         """
         Main method to categorize a transaction.
         
+        Runs FTS, semantic search, and DuckDuckGo search in parallel,
+        classifies each result with zero-shot, and returns the one with highest confidence.
+        
         Args:
             search_term: The business name or transaction description to categorize.
             
         Returns:
             Dictionary with category, confidence, and search results, or None if no match found.
         """
-        results = self.search_business(search_term)
+        candidates = []
         
-        if results:
-            # Extract business info (handle both FTS and semantic search result formats)
-            if len(results[0]) == 4:  # FTS result
-                business_name, business_domain = results[0][0], results[0][1]
-            else:  # Semantic search result (has id as first column)
-                business_name, business_domain = results[0][1], results[0][2]
-
-            distance_info = results[0][-1]  # Could be rank or hamming distance 
-            print(distance_info)
-            translated_business = self.translate_to_english(f"{business_name}, {business_domain}")
+        # 1. FTS search
+        fts_results = self.search_fts(search_term)
+        if fts_results:
+            business_name, business_domain = fts_results[0][0], fts_results[0][1]
+            translated = self.translate_to_english(f"{business_name}, {business_domain}")
             classification = self.zeroshot_classifier(
-                translated_business,
+                translated,
                 self.categories,
                 hypothesis_template=self.HYPOTHESIS_TEMPLATE,
                 multi_label=False
             )
-            
-            return {
+            candidates.append({
                 "category": classification["labels"][0],
                 "confidence": classification["scores"][0],
-                "all_labels": classification["labels"],
-                "all_scores": classification["scores"],
                 "matched_business": business_name,
                 "business_domain": business_domain,
-                "translated_text": translated_business,
-                "source": "database"
-            }
+                "translated_text": translated,
+                "source": "fts"
+            })
         
-        # Fallback: search the business on the internet via DuckDuckGo
+        # 2. Semantic search
+        semantic_results = self.search_semantic(search_term)
+        if semantic_results:
+            business_name, business_domain = semantic_results[0][1], semantic_results[0][2]
+            translated = self.translate_to_english(f"{business_name}, {business_domain}")
+            classification = self.zeroshot_classifier(
+                translated,
+                self.categories,
+                hypothesis_template=self.HYPOTHESIS_TEMPLATE,
+                multi_label=False
+            )
+            candidates.append({
+                "category": classification["labels"][0],
+                "confidence": classification["scores"][0],
+                "matched_business": business_name,
+                "business_domain": business_domain,
+                "translated_text": translated,
+                "source": "semantic"
+            })
+        
+        # 3. DuckDuckGo search
         ddgs_description = self.search_ddgs(search_term)
+        if ddgs_description:
+            translated = self.translate_to_english(ddgs_description)
+            classification = self.zeroshot_classifier(
+                translated,
+                self.categories,
+                hypothesis_template=self.HYPOTHESIS_TEMPLATE,
+                multi_label=False
+            )
+            candidates.append({
+                "category": classification["labels"][0],
+                "confidence": classification["scores"][0],
+                "matched_business": search_term,
+                "business_domain": ddgs_description,
+                "translated_text": translated,
+                "source": "ddgs"
+            })
         
-        if not ddgs_description:
+        if not candidates:
             return None
         
-        translated_description = self.translate_to_english(ddgs_description)
-        print(f"DDGS fallback for '{search_term}': {translated_description}")
+        # Return the candidate with the highest confidence
+        best = max(candidates, key=lambda c: c["confidence"])
+        if best["confidence"] < 0.5:
+            best["category"] = None
         
-        classification = self.zeroshot_classifier(
-            translated_description,
-            self.categories,
-            hypothesis_template=self.HYPOTHESIS_TEMPLATE,
-            multi_label=False
-        )
-        
-        return {
-            "category": classification["labels"][0],
-            "confidence": classification["scores"][0],
-            "all_labels": classification["labels"],
-            "all_scores": classification["scores"],
-            "matched_business": search_term,
-            "business_domain": ddgs_description,
-            "translated_text": translated_description,
-            "source": "ddgs"
-        }
+        return best
     
     def __enter__(self):
         """Context manager entry."""
@@ -296,7 +304,7 @@ class TransactionCategorizer:
 if __name__ == "__main__":
     # Example usage
     with TransactionCategorizer() as categorizer:
-        search_term = 'Esso'
+        search_term = 'Couch tard'
         result = categorizer.categorize(search_term)
         
         if result:
