@@ -9,9 +9,9 @@ from typing import Optional
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from pdf_extractor.extractor import TransactionExtractor
-from pdf_extractor.models import BankType
-from categorizer.transaction_categorizer import TransactionCategorizer, DEFAULT_BUDGET_CATEGORIES
+from src.pdf_extractor.extractor import TransactionExtractor
+from src.pdf_extractor.models import BankType
+from src.categorizer.transaction_categorizer import TransactionCategorizer, DEFAULT_BUDGET_CATEGORIES
 
 
 app = FastAPI(
@@ -97,10 +97,7 @@ async def extract_transactions(
                     for _, row in df.iterrows()
                 ]
                 categorizer = TransactionCategorizer(categories=categories)
-                for transaction in transactions:
-                    category = categorizer.categorize(transaction.description)
-                    if category:
-                        transaction.category = category["category"]
+                categorizer.categorize(transactions)
 
             results.append(FileResult(
                 filename=file.filename,
@@ -165,10 +162,7 @@ async def extract_single_file(
             ]
 
             categorizer = TransactionCategorizer(categories=categories)
-            for transaction in transactions:
-                category = categorizer.categorize(transaction.description)
-                if category:
-                    transaction.category = category["category"]
+            categorizer.categorize(transactions)
 
         return FileResult(
             filename=file.filename,

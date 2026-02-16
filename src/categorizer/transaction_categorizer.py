@@ -178,65 +178,67 @@ class TransactionCategorizer:
         
         return cursor.fetchall()
 
-    def search_ddgs(self, search_term: str, max_results: int = 3) -> str | None:
-        """Search for a business using DuckDuckGo and return a short description.
+    def search_ddgs(self, search_term: str, max_results: int = 5) -> str | None:
+        """Search for a business using DuckDuckGo and return the most relevant snippet.
+        
+        Fetches multiple results from DDGS, then uses in-memory semantic search
+        (cosine similarity with the embedding model) to pick the snippet most
+        relevant to the search term.
         
         Args:
             search_term: The business name to search for.
             max_results: Maximum number of search results to consider.
             
         Returns:
-            A short description of the business, or None if nothing found.
+            The most semantically relevant snippet, or None if nothing found.
         """
         try:
             with DDGS() as ddgs:
-                results = list(ddgs.text(f"{search_term} business", max_results=max_results, backend = "google"))
+                results = list(ddgs.text(f"what is {search_term} business", max_results=max_results, backend="google"))
             
             if not results:
                 return None
             
-            # Combine the top result snippets into a concise description
             snippets = [r.get("body", "") for r in results if r.get("body")]
             if not snippets:
                 return None
             
-            # Use the first snippet as the primary description
-
-            print(f"DDGS results for '{snippets[0]}'")
-            return snippets[0]
+            if len(snippets) == 1:
+                print(f"DDGS result for '{search_term}': {snippets[0]}")
+                return snippets[0]
+            
+            # In-memory semantic search: rank snippets by cosine similarity to the search term
+            query_embedding = self.embedding_model.encode(search_term, task="retrieval.query")
+            snippet_embeddings = self.embedding_model.encode(snippets, task="retrieval.passage")
+            
+            # Cosine similarity: dot product of normalized vectors
+            query_norm = query_embedding / np.linalg.norm(query_embedding)
+            snippet_norms = snippet_embeddings / np.linalg.norm(snippet_embeddings, axis=1, keepdims=True)
+            similarities = snippet_norms @ query_norm
+            
+            best_idx = int(np.argmax(similarities))
+            print(f"DDGS best snippet for '{search_term}' (similarity={similarities[best_idx]:.3f}): {snippets[best_idx]}")
+            return snippets[best_idx]
         except Exception as e:
             print(f"DDGS search failed for '{search_term}': {e}")
             return None
 
-    def categorize(self, search_term: str) -> dict | None:
-        """
-        Main method to categorize a transaction.
+    def _gather_candidates(self, search_term: str) -> tuple[list[str], list[dict]]:
+        """Gather candidate texts and metadata from all search sources for a single term.
         
-        Runs FTS, semantic search, and DuckDuckGo search in parallel,
-        classifies each result with zero-shot, and returns the one with highest confidence.
-        
-        Args:
-            search_term: The business name or transaction description to categorize.
-            
         Returns:
-            Dictionary with category, confidence, and search results, or None if no match found.
+            Tuple of (texts_to_classify, candidates_meta) for this search term.
         """
-        candidates = []
+        texts = []
+        metas = []
         
         # 1. FTS search
         fts_results = self.search_fts(search_term)
         if fts_results:
             business_name, business_domain = fts_results[0][0], fts_results[0][1]
             translated = self.translate_to_english(f"{business_name}, {business_domain}")
-            classification = self.zeroshot_classifier(
-                translated,
-                self.categories,
-                hypothesis_template=self.HYPOTHESIS_TEMPLATE,
-                multi_label=False
-            )
-            candidates.append({
-                "category": classification["labels"][0],
-                "confidence": classification["scores"][0],
+            texts.append(translated)
+            metas.append({
                 "matched_business": business_name,
                 "business_domain": business_domain,
                 "translated_text": translated,
@@ -244,53 +246,93 @@ class TransactionCategorizer:
             })
         
         # 2. Semantic search
-        semantic_results = self.search_semantic(search_term)
-        if semantic_results:
-            business_name, business_domain = semantic_results[0][1], semantic_results[0][2]
-            translated = self.translate_to_english(f"{business_name}, {business_domain}")
-            classification = self.zeroshot_classifier(
-                translated,
-                self.categories,
-                hypothesis_template=self.HYPOTHESIS_TEMPLATE,
-                multi_label=False
-            )
-            candidates.append({
-                "category": classification["labels"][0],
-                "confidence": classification["scores"][0],
-                "matched_business": business_name,
-                "business_domain": business_domain,
-                "translated_text": translated,
-                "source": "semantic"
-            })
+        # semantic_results = self.search_semantic(search_term)
+        # if semantic_results:
+        #     business_name, business_domain = semantic_results[0][1], semantic_results[0][2]
+        #     translated = self.translate_to_english(f"{business_name}, {business_domain}")
+        #     texts.append(translated)
+        #     metas.append({
+        #         "matched_business": business_name,
+        #         "business_domain": business_domain,
+        #         "translated_text": translated,
+        #         "source": "semantic"
+        #     })
         
         # 3. DuckDuckGo search
         ddgs_description = self.search_ddgs(search_term)
         if ddgs_description:
             translated = self.translate_to_english(ddgs_description)
-            classification = self.zeroshot_classifier(
-                translated,
-                self.categories,
-                hypothesis_template=self.HYPOTHESIS_TEMPLATE,
-                multi_label=False
-            )
-            candidates.append({
-                "category": classification["labels"][0],
-                "confidence": classification["scores"][0],
+            texts.append(translated)
+            metas.append({
                 "matched_business": search_term,
                 "business_domain": ddgs_description,
                 "translated_text": translated,
                 "source": "ddgs"
             })
         
-        if not candidates:
-            return None
+        return texts, metas
+
+    def categorize(self, transactions: list) -> list:
+        """
+        Categorize a list of transactions in place.
         
-        # Return the candidate with the highest confidence
-        best = max(candidates, key=lambda c: c["confidence"])
-        if best["confidence"] < 0.5:
-            best["category"] = None
+        Each transaction must have a 'description' attribute (used for search)
+        and a 'category' attribute (set by this method).
         
-        return best
+        Runs FTS, semantic search, and DuckDuckGo search for each transaction,
+        batches all zero-shot classifications in a single pipeline call,
+        and assigns the best category to each transaction.
+        
+        Args:
+            transactions: List of transaction objects with 'description' and 'category' attributes.
+            
+        Returns:
+            The same list of transactions with 'category' populated.
+        """
+        # Gather all candidates across all transactions
+        all_texts = []
+        # Track which texts belong to which transaction: list of (start_idx, count, metas)
+        term_ranges = []
+        
+        for txn in transactions:
+            texts, metas = self._gather_candidates(txn.description)
+            start = len(all_texts)
+            all_texts.extend(texts)
+            term_ranges.append((start, len(texts), metas))
+        
+        # Batch zero-shot classification in a single pipeline call
+        if all_texts:
+            classifications = self.zeroshot_classifier(
+                all_texts,
+                self.categories,
+                hypothesis_template=self.HYPOTHESIS_TEMPLATE,
+                multi_label=False,
+                batch_size=len(all_texts)
+            )
+            if isinstance(classifications, dict):
+                classifications = [classifications]
+        else:
+            classifications = []
+        
+        # Assign categories to transactions in order
+        for txn, (start, count, metas) in zip(transactions, term_ranges):
+            if count == 0:
+                continue
+            
+            candidates = []
+            for i, meta in enumerate(metas):
+                clf = classifications[start + i]
+                candidates.append({
+                    **meta,
+                    "category": clf["labels"][0],
+                    "confidence": clf["scores"][0],
+                })
+            
+            best = max(candidates, key=lambda c: c["confidence"])
+            if best["confidence"] >= 0.5:
+                txn.category = best["category"]
+        
+        return transactions
     
     def __enter__(self):
         """Context manager entry."""
@@ -302,14 +344,16 @@ class TransactionCategorizer:
 
 
 if __name__ == "__main__":
-    # Example usage
+    from dataclasses import dataclass, field
+
+    @dataclass
+    class MockTransaction:
+        description: str
+        category: str | None = None
+
     with TransactionCategorizer() as categorizer:
-        search_term = 'Couch tard'
-        result = categorizer.categorize(search_term)
+        transactions = [MockTransaction(description='Couch tard')]
+        categorizer.categorize(transactions)
         
-        if result:
-            print(f"Category: {result['category']}")
-            print(f"Confidence: {result['confidence']:.2%}")
-            print(f"Matched Business: {result['matched_business']}")
-        else:
-            print("No matching business found.")
+        for txn in transactions:
+            print(f"'{txn.description}' -> Category: {txn.category}")
