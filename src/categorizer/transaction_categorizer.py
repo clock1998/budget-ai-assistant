@@ -5,39 +5,7 @@ from pgvector.psycopg2 import register_vector
 from sentence_transformers import SentenceTransformer, quantize_embeddings
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 from ddgs import DDGS
-
-DEFAULT_BUDGET_CATEGORIES = [
-    "Groceries and Supermarkets",
-    "Restaurants and Dining",
-    "Fast Food and Coffee Shops",
-    "Rent and Mortgage Payments",
-    "Utilities and Monthly Bills",
-    "Phone and Internet Services",
-    "Gas Stations and Automotive Fuel",
-    "Public Transit and Rideshare",
-    "Airfare and Hotel Travel",
-    "Clothing and Fashion Accessories",
-    "Department Stores and Big Box Retailers",  # Walmart, Target, Costco
-    "Online Marketplaces and E-commerce",      # Amazon, eBay, Etsy
-    "Electronics and Computer Hardware",       # Apple, Best Buy, Newegg
-    "Home Improvement and Hardware Stores",    # Home Depot, Lowe's, IKEA
-    "Clothing, Apparel, and Footwear",         # Nike, Zara, Gap
-    "Books, Hobby, and Stationery",            # Barnes & Noble, Michaels
-    "Health, Beauty, and Drugstores",          # CVS, Walgreens, Sephora
-    "Pet Supplies and Veterinary Services",    # Chewy, Petco
-    "Sporting Goods and Outdoor Gear",         # REI, Dick's Sporting Goods
-    "Discount and Variety Stores",             # Dollar General, Five Below
-    "Household Goods and Furniture",
-    "Health, Pharmacy, and Medical",
-    "Fitness, Gyms, and Sports",
-    "Entertainment, Streaming, and Movies",
-    "Personal Care, Beauty, and Barber",
-    "Insurance and Financial Services",
-    "Education and Learning",
-    "Government Fees and Taxes",
-    "Charity and Donations"
-]
-
+from categories import DEFAULT_BUDGET_CATEGORIES
 
 class TransactionCategorizer:
     """Categorizes business transactions using search and zero-shot classification."""
@@ -178,7 +146,7 @@ class TransactionCategorizer:
         
         return cursor.fetchall()
 
-    def search_ddgs(self, search_term: str, max_results: int = 5) -> str | None:
+    def search_ddgs(self, search_term: str, max_results: int = 5, context: str | None = None) -> str | None:
         """Search for a business using DuckDuckGo and return the most relevant snippet.
         
         Fetches multiple results from DDGS, then uses in-memory semantic search
@@ -188,13 +156,17 @@ class TransactionCategorizer:
         Args:
             search_term: The business name to search for.
             max_results: Maximum number of search results to consider.
+            context: Optional context string to refine the search query.
             
         Returns:
             The most semantically relevant snippet, or None if nothing found.
         """
         try:
+            query = f"what is {search_term} business about?"
+            if context:
+                query += f" {context}"
             with DDGS() as ddgs:
-                results = list(ddgs.text(f"what is {search_term} business", max_results=max_results, backend="google"))
+                results = list(ddgs.text(query, max_results=max_results, backend="google"))
             
             if not results:
                 return None
@@ -223,16 +195,20 @@ class TransactionCategorizer:
             print(f"DDGS search failed for '{search_term}': {e}")
             return None
 
-    def _gather_candidates(self, search_term: str) -> tuple[list[str], list[dict]]:
+    def _gather_candidates(self, search_term: str, context: str | None = None) -> tuple[list[str], list[dict]]:
         """Gather candidate texts and metadata from all search sources for a single term.
         
+        Args:
+            search_term: The business name to search for.
+            context: Optional context string passed to search_ddgs.
+            
         Returns:
             Tuple of (texts_to_classify, candidates_meta) for this search term.
         """
         texts = []
         metas = []
         
-        # 1. FTS search
+        1. FTS search
         fts_results = self.search_fts(search_term)
         if fts_results:
             business_name, business_domain = fts_results[0][0], fts_results[0][1]
@@ -259,7 +235,7 @@ class TransactionCategorizer:
         #     })
         
         # 3. DuckDuckGo search
-        ddgs_description = self.search_ddgs(search_term)
+        ddgs_description = self.search_ddgs(search_term, context=context)
         if ddgs_description:
             translated = self.translate_to_english(ddgs_description)
             texts.append(translated)
@@ -272,7 +248,7 @@ class TransactionCategorizer:
         
         return texts, metas
 
-    def categorize(self, transactions: list) -> list:
+    def categorize(self, transactions: list, context: str | None = None) -> list:
         """
         Categorize a list of transactions in place.
         
@@ -285,6 +261,7 @@ class TransactionCategorizer:
         
         Args:
             transactions: List of transaction objects with 'description' and 'category' attributes.
+            context: Optional context string to help refine DuckDuckGo searches.
             
         Returns:
             The same list of transactions with 'category' populated.
@@ -295,7 +272,7 @@ class TransactionCategorizer:
         term_ranges = []
         
         for txn in transactions:
-            texts, metas = self._gather_candidates(txn.description)
+            texts, metas = self._gather_candidates(txn.description, context=context)
             start = len(all_texts)
             all_texts.extend(texts)
             term_ranges.append((start, len(texts), metas))
@@ -329,8 +306,7 @@ class TransactionCategorizer:
                 })
             
             best = max(candidates, key=lambda c: c["confidence"])
-            if best["confidence"] >= 0.5:
-                txn.category = best["category"]
+            txn.category = best["category"]
         
         return transactions
     
@@ -352,7 +328,7 @@ if __name__ == "__main__":
         category: str | None = None
 
     with TransactionCategorizer() as categorizer:
-        transactions = [MockTransaction(description='Couch tard')]
+        transactions = [MockTransaction(description='Steam')]
         categorizer.categorize(transactions)
         
         for txn in transactions:

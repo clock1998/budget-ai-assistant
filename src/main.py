@@ -9,9 +9,10 @@ from typing import Optional
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
+from src.categorizer.categories import DEFAULT_BUDGET_CATEGORIES
 from src.pdf_extractor.extractor import TransactionExtractor
 from src.pdf_extractor.models import BankType
-from src.categorizer.transaction_categorizer import TransactionCategorizer, DEFAULT_BUDGET_CATEGORIES
+from src.categorizer.transaction_categorizer import TransactionCategorizer
 
 
 app = FastAPI(
@@ -51,6 +52,7 @@ class Response(BaseModel):
 async def extract_transactions(
     files: list[UploadFile] = File(...),
     categories: list[str] = DEFAULT_BUDGET_CATEGORIES,
+    context: Optional[str] = None,
 ):
     """
     Extract transactions from uploaded bank statement PDFs.
@@ -58,6 +60,7 @@ async def extract_transactions(
     Args:
         files: List of PDF files to process.
         categories: List of budget categories for classification. Defaults to DEFAULT_BUDGET_CATEGORIES.
+        context: Optional context to help refine transaction categorization (e.g. country, region, bank name).
         
     Returns:
         Response with transactions from all files.
@@ -97,7 +100,7 @@ async def extract_transactions(
                     for _, row in df.iterrows()
                 ]
                 categorizer = TransactionCategorizer(categories=categories)
-                categorizer.categorize(transactions)
+                categorizer.categorize(transactions, context=context)
 
             results.append(FileResult(
                 filename=file.filename,
@@ -129,6 +132,7 @@ async def extract_transactions(
 async def extract_single_file(
     file: UploadFile = File(...),
     categories: list[str] = DEFAULT_BUDGET_CATEGORIES,
+    context: Optional[str] = None,
 ):
     """
     Extract transactions from a single bank statement PDF.
@@ -136,6 +140,7 @@ async def extract_single_file(
     Args:
         file: PDF file to process.
         categories: List of budget categories for classification. Defaults to DEFAULT_BUDGET_CATEGORIES.
+        context: Optional context to help refine transaction categorization (e.g. country, region, bank name).
         
     Returns:
         FileResult with extracted transactions.
@@ -162,7 +167,7 @@ async def extract_single_file(
             ]
 
             categorizer = TransactionCategorizer(categories=categories)
-            categorizer.categorize(transactions)
+            categorizer.categorize(transactions, context=context)
 
         return FileResult(
             filename=file.filename,
