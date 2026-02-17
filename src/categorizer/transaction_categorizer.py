@@ -208,7 +208,7 @@ class TransactionCategorizer:
         texts = []
         metas = []
         
-        1. FTS search
+        #1. FTS search
         fts_results = self.search_fts(search_term)
         if fts_results:
             business_name, business_domain = fts_results[0][0], fts_results[0][1]
