@@ -1,0 +1,23 @@
+### Extract transactions from multiple PDF files
+@baseUrl = http://localhost:8000
+
+# @name extractMultiple
+POST {{baseUrl}}/extract
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundary
+
+------WebKitFormBoundary
+Content-Disposition: form-data; name="files"; filename="desjardins_december_2025.pdf"
+Content-Type: application/pdf
+
+< ./desjardins2025.pdf
+------WebKitFormBoundary
+Content-Disposition: form-data; name="files"; filename="scotia_bank_december_2025.pdf"
+Content-Type: application/pdf
+
+< ./scotia_bank_december_2025.pdf
+------WebKitFormBoundary
+Content-Disposition: form-data; name="files"; filename="rogers_december_2025.pdf"
+Content-Type: application/pdf
+
+< ./rogers_december_2025.pdf
+------WebKitFormBoundary--

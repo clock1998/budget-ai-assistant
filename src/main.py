@@ -3,15 +3,39 @@ Budget AI Assistant API
 
 FastAPI endpoints for extracting transactions from bank statement PDFs.
 """
+import csv
+import io
 import uvicorn
+from enum import Enum
 from typing import Optional
  
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile, Form
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from src.categorizer.categories import DEFAULT_BUDGET_CATEGORIES
 from src.pdf_extractor.extractor import TransactionExtractor
 from src.pdf_extractor.models import BankType
-from src.categorizer.transaction_categorizer import TransactionCategorizer, DEFAULT_BUDGET_CATEGORIES
+from src.categorizer.transaction_categorizer import TransactionCategorizer
+
+
+class OutputFormat(str, Enum):
+    json = "json"
+    csv = "csv"
+
+
+class ExtractOptions(BaseModel):
+    """Options for transaction extraction, sent as JSON in a form field."""
+    categories: list[str] = DEFAULT_BUDGET_CATEGORIES
+    context: Optional[str] = None
+    format: OutputFormat = OutputFormat.json
+
+
+def parse_options(options: Optional[str] = Form(None)) -> ExtractOptions:
+    """Parse the 'options' form field as JSON into ExtractOptions."""
+    if options is None:
+        return ExtractOptions()
+    return ExtractOptions.model_validate_json(options)
 
 
 app = FastAPI(
@@ -19,6 +43,16 @@ app = FastAPI(
     description="Extract transactions from bank statement PDFs",
     version="1.0.0",
 )
+
+
+def transactions_to_csv(transactions: list["TransactionResponse"]) -> str:
+    """Convert a list of TransactionResponse objects to a CSV string."""
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["date", "post_date", "description", "amount", "category"])
+    for txn in transactions:
+        writer.writerow([txn.date, txn.post_date or "", txn.description, txn.amount, txn.category or ""])
+    return output.getvalue()
 
 
 class TransactionResponse(BaseModel):
@@ -50,18 +84,22 @@ class Response(BaseModel):
 @app.post("/extract", response_model=Response)
 async def extract_transactions(
     files: list[UploadFile] = File(...),
-    categories: list[str] = DEFAULT_BUDGET_CATEGORIES,
+    options: Optional[str] = Form(None),
 ):
     """
     Extract transactions from uploaded bank statement PDFs.
     
     Args:
         files: List of PDF files to process.
-        categories: List of budget categories for classification. Defaults to DEFAULT_BUDGET_CATEGORIES.
+        options: JSON string with extraction options. Accepts:
+            - categories: list of budget categories (default: DEFAULT_BUDGET_CATEGORIES)
+            - context: optional context to refine categorization (e.g. country, bank name)
+            - format: "json" or "csv" (default: "json")
         
     Returns:
-        Response with transactions from all files.
+        Response with transactions from all files, or a CSV download.
     """
+    opts = parse_options(options)
     extractor = TransactionExtractor()
     results = []
     successful = 0
@@ -96,8 +134,8 @@ async def extract_transactions(
                     )
                     for _, row in df.iterrows()
                 ]
-                categorizer = TransactionCategorizer(categories=categories)
-                categorizer.categorize(transactions)
+                categorizer = TransactionCategorizer(categories=opts.categories)
+                categorizer.categorize(transactions, context=opts.context)
 
             results.append(FileResult(
                 filename=file.filename,
@@ -117,6 +155,15 @@ async def extract_transactions(
             ))
             failed += 1
 
+    if opts.format == OutputFormat.csv:
+        all_transactions = [txn for result in results for txn in result.transactions]
+        csv_content = transactions_to_csv(all_transactions)
+        return StreamingResponse(
+            io.StringIO(csv_content),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=transactions.csv"},
+        )
+
     return Response(
         total_files=len(files),
         successful=successful,
@@ -128,18 +175,22 @@ async def extract_transactions(
 @app.post("/extract/single", response_model=FileResult)
 async def extract_single_file(
     file: UploadFile = File(...),
-    categories: list[str] = DEFAULT_BUDGET_CATEGORIES,
+    options: Optional[str] = Form(None),
 ):
     """
     Extract transactions from a single bank statement PDF.
     
     Args:
         file: PDF file to process.
-        categories: List of budget categories for classification. Defaults to DEFAULT_BUDGET_CATEGORIES.
+        options: JSON string with extraction options. Accepts:
+            - categories: list of budget categories (default: DEFAULT_BUDGET_CATEGORIES)
+            - context: optional context to refine categorization (e.g. country, bank name)
+            - format: "json" or "csv" (default: "json")
         
     Returns:
-        FileResult with extracted transactions.
+        FileResult with extracted transactions, or a CSV download.
     """
+    opts = parse_options(options)
     if not file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="File must be a PDF")
 
@@ -161,8 +212,16 @@ async def extract_single_file(
                 for _, row in df.iterrows()
             ]
 
-            categorizer = TransactionCategorizer(categories=categories)
-            categorizer.categorize(transactions)
+            categorizer = TransactionCategorizer(categories=opts.categories)
+            categorizer.categorize(transactions, context=opts.context)
+
+        if opts.format == OutputFormat.csv:
+            csv_content = transactions_to_csv(transactions)
+            return StreamingResponse(
+                io.StringIO(csv_content),
+                media_type="text/csv",
+                headers={"Content-Disposition": f"attachment; filename={file.filename.rsplit('.', 1)[0]}_transactions.csv"},
+            )
 
         return FileResult(
             filename=file.filename,

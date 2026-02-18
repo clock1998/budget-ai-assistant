@@ -1,0 +1,12 @@
+### Test with Rogers only
+@baseUrl = http://localhost:8000
+
+POST {{baseUrl}}/extract/single
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundary
+
+------WebKitFormBoundary
+Content-Disposition: form-data; name="file"; filename="rogers_december_2025.pdf"
+Content-Type: application/pdf
+
+< ./desjardins2025.pdf
+------WebKitFormBoundary--
