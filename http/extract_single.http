@@ -1,0 +1,18 @@
+### Extract transactions from a single PDF file
+@baseUrl = http://localhost:8000
+
+# @name extractSingle
+POST {{baseUrl}}/extract/single
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundary
+
+------WebKitFormBoundary
+Content-Disposition: form-data; name="file"; filename="desjardins2025.pdf"
+Content-Type: application/pdf
+
+< ./desjardins2025.pdf
+------WebKitFormBoundary
+Content-Disposition: form-data; name="options"
+Content-Type: application/json
+
+{"format": "csv"}
+------WebKitFormBoundary--

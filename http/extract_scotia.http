@@ -1,0 +1,12 @@
+### Test with Scotia Bank only
+@baseUrl = http://localhost:8000
+
+POST {{baseUrl}}/extract/single
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundary
+
+------WebKitFormBoundary
+Content-Disposition: form-data; name="file"; filename="scotia_bank_december_2025.pdf"
+Content-Type: application/pdf
+
+< ./scotia_bank_december_2025.pdf
+------WebKitFormBoundary--

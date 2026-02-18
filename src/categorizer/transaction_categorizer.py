@@ -5,7 +5,7 @@ from pgvector.psycopg2 import register_vector
 from sentence_transformers import SentenceTransformer, quantize_embeddings
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 from ddgs import DDGS
-from categories import DEFAULT_BUDGET_CATEGORIES
+from src.categorizer.categories import DEFAULT_BUDGET_CATEGORIES
 
 class TransactionCategorizer:
     """Categorizes business transactions using search and zero-shot classification."""
@@ -208,7 +208,7 @@ class TransactionCategorizer:
         texts = []
         metas = []
         
-        #1. FTS search
+        # 1. FTS search
         fts_results = self.search_fts(search_term)
         if fts_results:
             business_name, business_domain = fts_results[0][0], fts_results[0][1]
