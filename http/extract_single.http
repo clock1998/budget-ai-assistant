@@ -6,10 +6,10 @@ POST {{baseUrl}}/extract/single
 Content-Type: multipart/form-data; boundary=----WebKitFormBoundary
 
 ------WebKitFormBoundary
-Content-Disposition: form-data; name="file"; filename="desjardins2025.pdf"
+Content-Disposition: form-data; name="file"; filename="scotialbank-2022-04.pdf"
 Content-Type: application/pdf
 
-< ./desjardins2025.pdf
+< ./scotialbank-2022-04.pdf
 ------WebKitFormBoundary
 Content-Disposition: form-data; name="options"
 Content-Type: application/json

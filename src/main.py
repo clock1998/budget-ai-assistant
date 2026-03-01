@@ -14,6 +14,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from src.categorizer.categories import DEFAULT_BUDGET_CATEGORIES
+from src.google.client import export_transactions_to_sheet
 from src.pdf_extractor.extractor import TransactionExtractor
 from src.pdf_extractor.models import BankType
 from src.categorizer.transaction_categorizer import TransactionCategorizer
@@ -22,6 +23,7 @@ from src.categorizer.transaction_categorizer import TransactionCategorizer
 class OutputFormat(str, Enum):
     json = "json"
     csv = "csv"
+    google_sheets = "google_sheets"
 
 
 class ExtractOptions(BaseModel):
@@ -29,6 +31,7 @@ class ExtractOptions(BaseModel):
     categories: list[str] = DEFAULT_BUDGET_CATEGORIES
     context: Optional[str] = None
     format: OutputFormat = OutputFormat.json
+    sheet_title: Optional[str] = None
 
 
 def parse_options(options: Optional[str] = Form(None)) -> ExtractOptions:
@@ -71,6 +74,12 @@ class FileResult(BaseModel):
     transactions: list[TransactionResponse]
     transaction_count: int
     error: Optional[str] = None
+
+
+class GoogleSheetResponse(BaseModel):
+    """Response model when exporting to Google Sheets."""
+    sheet_url: str
+    transaction_count: int
 
 
 class Response(BaseModel):
@@ -155,13 +164,27 @@ async def extract_transactions(
             ))
             failed += 1
 
+    all_transactions = [txn for result in results for txn in result.transactions]
+
     if opts.format == OutputFormat.csv:
-        all_transactions = [txn for result in results for txn in result.transactions]
         csv_content = transactions_to_csv(all_transactions)
         return StreamingResponse(
             io.StringIO(csv_content),
             media_type="text/csv",
             headers={"Content-Disposition": "attachment; filename=transactions.csv"},
+        )
+
+    if opts.format == OutputFormat.google_sheets:
+        txn_dicts = [txn.model_dump() for txn in all_transactions]
+        try:
+            sheet_url = export_transactions_to_sheet(
+                txn_dicts, title=opts.sheet_title,
+            )
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Google Sheets export failed: {e}")
+        return GoogleSheetResponse(
+            sheet_url=sheet_url,
+            transaction_count=len(txn_dicts),
         )
 
     return Response(
@@ -221,6 +244,19 @@ async def extract_single_file(
                 io.StringIO(csv_content),
                 media_type="text/csv",
                 headers={"Content-Disposition": f"attachment; filename={file.filename.rsplit('.', 1)[0]}_transactions.csv"},
+            )
+
+        if opts.format == OutputFormat.google_sheets:
+            txn_dicts = [txn.model_dump() for txn in transactions]
+            try:
+                sheet_url = export_transactions_to_sheet(
+                    txn_dicts, title=opts.sheet_title,
+                )
+            except Exception as e:
+                raise HTTPException(status_code=502, detail=f"Google Sheets export failed: {e}")
+            return GoogleSheetResponse(
+                sheet_url=sheet_url,
+                transaction_count=len(txn_dicts),
             )
 
         return FileResult(
