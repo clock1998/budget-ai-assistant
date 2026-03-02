@@ -8,5 +8,8 @@ Content-Type: multipart/form-data; boundary=----WebKitFormBoundary
 Content-Disposition: form-data; name="file"; filename="scotia_bank_december_2025.pdf"
 Content-Type: application/pdf
 
-< ./scotia_bank_december_2025.pdf
+< ./scotiabank-2022-04.pdf
+------WebKitFormBoundary--
+
+{"format": "csv"}
 ------WebKitFormBoundary--
