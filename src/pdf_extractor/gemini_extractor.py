@@ -28,6 +28,7 @@ For each transaction return a JSON object with these fields:
 - "description": merchant / payee description exactly as it appears
 - "amount": numeric amount (positive = debit/purchase, negative = credit/refund/payment)
 - "category": one of the allowed categories listed below
+- "transaction_source": the credit card name / product title shown on the statement (e.g. "DESJARDINS ODYSSEE WORLDELITE MASTERCARD", "Scotia Momentum VISA Infinite Card")
 
 Allowed categories:
 {categories}
@@ -197,6 +198,7 @@ class GeminiExtractor:
                 "description": str(item.get("description", "")),
                 "amount": float(item.get("amount", 0)),
                 "category": item.get("category") or None,
+                "transaction_source": item.get("transaction_source") or None,
             })
 
         return transactions

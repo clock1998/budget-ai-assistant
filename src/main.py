@@ -50,9 +50,9 @@ def transactions_to_csv(transactions: list["TransactionResponse"]) -> str:
     """Convert a list of TransactionResponse objects to a CSV string."""
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["date", "post_date", "description", "amount", "category"])
+    writer.writerow(["date", "post_date", "description", "amount", "category", "transaction_source"])
     for txn in transactions:
-        writer.writerow([txn.date, txn.post_date or "", txn.description, txn.amount, txn.category or ""])
+        writer.writerow([txn.date, txn.post_date or "", txn.description, txn.amount, txn.category or "", txn.transaction_source or ""])
     return output.getvalue()
 
 
@@ -63,6 +63,7 @@ class TransactionResponse(BaseModel):
     description: str
     amount: float
     category: Optional[str] = None
+    transaction_source: Optional[str] = None
 
 
 class FileResult(BaseModel):
