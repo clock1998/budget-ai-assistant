@@ -2,6 +2,8 @@
 Budget AI Assistant API
 
 FastAPI endpoints for extracting transactions from bank statement PDFs.
+
+Workflow: Upload PDF → Redact PII → Gemini extracts & categorises → Response
 """
 import csv
 import io
@@ -13,10 +15,9 @@ from fastapi import FastAPI, File, HTTPException, UploadFile, Form
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from src.categorizer.categories import DEFAULT_BUDGET_CATEGORIES
+from src.categories import DEFAULT_BUDGET_CATEGORIES
 from src.pdf_extractor.extractor import TransactionExtractor
-from src.pdf_extractor.models import BankType
-from src.categorizer.transaction_categorizer import TransactionCategorizer
+from src.pdf_extractor.redactor import PiiRedactor
 
 
 class OutputFormat(str, Enum):
@@ -67,7 +68,6 @@ class TransactionResponse(BaseModel):
 class FileResult(BaseModel):
     """Result for a single file extraction."""
     filename: str
-    bank_type: str
     transactions: list[TransactionResponse]
     transaction_count: int
     error: Optional[str] = None
@@ -87,15 +87,20 @@ async def extract_transactions(
     options: Optional[str] = Form(None),
 ):
     """
-    Extract transactions from uploaded bank statement PDFs.
-    
+    Extract and categorise transactions from uploaded bank statement PDFs.
+
+    Workflow per file:
+        1. Redact PII from the PDF.
+        2. Send the redacted PDF to the Gemini API which extracts all
+           transactions and assigns a budget category to each one.
+
     Args:
         files: List of PDF files to process.
         options: JSON string with extraction options. Accepts:
             - categories: list of budget categories (default: DEFAULT_BUDGET_CATEGORIES)
-            - context: optional context to refine categorization (e.g. country, bank name)
+            - context: optional context to refine categorisation
             - format: "json" or "csv" (default: "json")
-        
+
     Returns:
         Response with transactions from all files, or a CSV download.
     """
@@ -106,11 +111,9 @@ async def extract_transactions(
     failed = 0
 
     for file in files:
-        # Validate file type
         if not file.filename.lower().endswith('.pdf'):
             results.append(FileResult(
                 filename=file.filename,
-                bank_type=BankType.UNKNOWN.value,
                 transactions=[],
                 transaction_count=0,
                 error="File must be a PDF",
@@ -119,27 +122,16 @@ async def extract_transactions(
             continue
 
         try:
-            # Extract transactions using upload method
-            df, bank_type = await extractor.extract_from_upload(file)
+            raw_transactions = await extractor.extract_from_upload(
+                file, categories=opts.categories, context=opts.context,
+            )
 
-            if df.empty:
-                transactions = []
-            else:
-                transactions = [
-                    TransactionResponse(
-                        date=row["date"],
-                        post_date=row.get("post_date"),
-                        description=row["description"],
-                        amount=row["amount"],
-                    )
-                    for _, row in df.iterrows()
-                ]
-                categorizer = TransactionCategorizer(categories=opts.categories)
-                categorizer.categorize(transactions, context=opts.context)
+            transactions = [
+                TransactionResponse(**txn) for txn in raw_transactions
+            ]
 
             results.append(FileResult(
                 filename=file.filename,
-                bank_type=bank_type.value,
                 transactions=transactions,
                 transaction_count=len(transactions),
             ))
@@ -148,7 +140,6 @@ async def extract_transactions(
         except Exception as e:
             results.append(FileResult(
                 filename=file.filename,
-                bank_type=BankType.UNKNOWN.value,
                 transactions=[],
                 transaction_count=0,
                 error=str(e),
@@ -178,15 +169,15 @@ async def extract_single_file(
     options: Optional[str] = Form(None),
 ):
     """
-    Extract transactions from a single bank statement PDF.
-    
+    Extract and categorise transactions from a single bank statement PDF.
+
     Args:
         file: PDF file to process.
         options: JSON string with extraction options. Accepts:
-            - categories: list of budget categories (default: DEFAULT_BUDGET_CATEGORIES)
-            - context: optional context to refine categorization (e.g. country, bank name)
+            - categories: list of budget categories
+            - context: optional context for Gemini prompt
             - format: "json" or "csv" (default: "json")
-        
+
     Returns:
         FileResult with extracted transactions, or a CSV download.
     """
@@ -197,23 +188,13 @@ async def extract_single_file(
     extractor = TransactionExtractor()
 
     try:
-        df, bank_type = await extractor.extract_from_upload(file)
+        raw_transactions = await extractor.extract_from_upload(
+            file, categories=opts.categories, context=opts.context,
+        )
 
-        if df.empty:
-            transactions = []
-        else:
-            transactions = [
-                TransactionResponse(
-                    date=row["date"],
-                    post_date=row.get("post_date"),
-                    description=row["description"],
-                    amount=row["amount"],
-                )
-                for _, row in df.iterrows()
-            ]
-
-            categorizer = TransactionCategorizer(categories=opts.categories)
-            categorizer.categorize(transactions, context=opts.context)
+        transactions = [
+            TransactionResponse(**txn) for txn in raw_transactions
+        ]
 
         if opts.format == OutputFormat.csv:
             csv_content = transactions_to_csv(transactions)
@@ -225,7 +206,6 @@ async def extract_single_file(
 
         return FileResult(
             filename=file.filename,
-            bank_type=bank_type.value,
             transactions=transactions,
             transaction_count=len(transactions),
         )
@@ -234,6 +214,84 @@ async def extract_single_file(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/redact")
+async def redact_pdf(file: UploadFile = File(...)):
+    """
+    Redact personal identifiable information from a bank statement PDF.
+
+    Uses PyMuPDF to detect and black-out names, credit card numbers,
+    account numbers, mailing addresses, phone numbers, and email addresses.
+
+    Args:
+        file: PDF file to redact.
+
+    Returns:
+        Redacted PDF file as a download.
+    """
+    if not file.filename.lower().endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="File must be a PDF")
+
+    content = await file.read()
+    redactor = PiiRedactor()
+
+    try:
+        redacted_bytes = redactor.redact(content)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Redaction failed: {str(e)}"
+        )
+
+    redacted_filename = f"redacted_{file.filename}"
+    return StreamingResponse(
+        io.BytesIO(redacted_bytes),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{redacted_filename}"'
+        },
+    )
+
+
+@app.post("/redact/multiple")
+async def redact_multiple_pdfs(files: list[UploadFile] = File(...)):
+    """
+    Redact PII from multiple bank statement PDFs.
+
+    Returns a ZIP archive containing all redacted PDFs.
+
+    Args:
+        files: List of PDF files to redact.
+
+    Returns:
+        ZIP file containing the redacted PDFs.
+    """
+    import zipfile
+
+    redactor = PiiRedactor()
+    zip_buffer = io.BytesIO()
+
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for file in files:
+            if not file.filename.lower().endswith('.pdf'):
+                continue
+
+            content = await file.read()
+            try:
+                redacted_bytes = redactor.redact(content)
+                zf.writestr(f"redacted_{file.filename}", redacted_bytes)
+            except Exception:
+                # Skip files that fail redaction
+                continue
+
+    zip_buffer.seek(0)
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": 'attachment; filename="redacted_statements.zip"'
+        },
+    )
+
+
 if __name__ == "__main__":
-    
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

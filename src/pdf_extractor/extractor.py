@@ -1,165 +1,107 @@
 """
 Transaction Extractor Module
 
-Main class for extracting transactions from bank statement PDFs.
+Orchestrates PII redaction and Gemini-based transaction extraction.
+
+Workflow:
+    1. Redact personal identifiers from the uploaded PDF.
+    2. Send the redacted PDF to the Gemini API which extracts all
+       transactions and assigns budget categories in a single pass.
 """
 
 import io
+from typing import Optional
 
-import pandas as pd
-import pdfplumber
 from fastapi import UploadFile
 
-from src.pdf_extractor.models import BankType, Transaction
-from src.pdf_extractor.parsers import DesjardinsParser, GenericParser
+from src.pdf_extractor.gemini_extractor import GeminiExtractor
+from src.pdf_extractor.redactor import PiiRedactor
 
 
 class TransactionExtractor:
     """
-    Main class for extracting transactions from bank statement PDFs.
-    
+    Extracts and categorises transactions from bank statement PDFs.
+
+    The pipeline:
+        upload → redact PII → send to Gemini → structured transactions
+
     Usage:
         extractor = TransactionExtractor()
-        df = extractor.extract("statement.pdf")
-        
-        # From uploaded files
-        df, bank_type = await extractor.extract_from_upload(file)
+        transactions = await extractor.extract_from_upload(
+            file, categories=[...], context="..."
+        )
     """
 
-    # Bank detection indicators
-    BANK_INDICATORS = {
-        BankType.DESJARDINS: [
-            'desjardins', 'caisse populaire', 'mouvement desjardins',
-            'bonidollars', 'relevé de compte', 'accès d',
-        ],
-        BankType.SCOTIA: [
-            'scotiabank', 'scotia bank', 'bank of nova scotia',
-            'scene+', 'scenepoints',
-        ],
-        BankType.ROGERS: [
-            'rogers bank', 'rogersbank', 'rogers mastercard',
-            'rogers world elite',
-        ],
-    }
-
-    def __init__(self):
-        """Initialize the transaction extractor."""
-        self._parsers = {
-            BankType.DESJARDINS: DesjardinsParser(),
-            BankType.SCOTIA: GenericParser(),
-            BankType.ROGERS: GenericParser(),
-            BankType.UNKNOWN: GenericParser(),
-        }
-
-    def detect_bank_type(self, pdf_text: str) -> BankType:
+    def __init__(self, *, gemini_model: str | None = None, api_key: str | None = None):
         """
-        Detect the bank type from PDF content.
-        
         Args:
-            pdf_text: Concatenated text from all pages of the PDF.
-            
-        Returns:
-            BankType enum value.
+            gemini_model: Override the default Gemini model name.
+            api_key: Google API key (falls back to GOOGLE_API_KEY env var).
         """
-        text_lower = pdf_text.lower()
-        scores = {}
+        self._redactor = PiiRedactor()
+        self._gemini = GeminiExtractor(model=gemini_model, api_key=api_key)
 
-        for bank_type, indicators in self.BANK_INDICATORS.items():
-            scores[bank_type] = sum(
-                1 for indicator in indicators if indicator in text_lower
-            )
-
-        # Find bank with highest score
-        best_bank = max(scores, key=scores.get)
-        if scores[best_bank] > 0:
-            return best_bank
-
-        return BankType.UNKNOWN
-
-    def _extract(self, pdf_path: str) -> pd.DataFrame:
-        """
-        Extract transactions from a bank statement PDF.
-        
-        Args:
-            pdf_path: Path to the PDF file.
-            
-        Returns:
-            DataFrame containing extracted transactions.
-        """
-        with pdfplumber.open(pdf_path) as pdf:
-            transactions, _ = self._extract_from_pdf(pdf)
-
-        if transactions:
-            return pd.DataFrame([t.to_dict() for t in transactions])
-
-        return pd.DataFrame()
+    # ── Public API ───────────────────────────────────────────────────────
 
     async def extract_from_upload(
-        self, file: UploadFile
-    ) -> tuple[pd.DataFrame, BankType]:
+        self,
+        file: UploadFile,
+        *,
+        categories: list[str] | None = None,
+        context: Optional[str] = None,
+    ) -> list[dict]:
         """
-        Extract transactions from an uploaded file.
-        
+        Extract and categorise transactions from a single uploaded PDF.
+
         Args:
-            file: FastAPI UploadFile object.
-            
+            file: FastAPI UploadFile (must be a PDF).
+            categories: Budget categories to use for classification.
+            context: Optional extra context for the Gemini prompt.
+
         Returns:
-            Tuple of (DataFrame, BankType).
+            List of transaction dicts with keys:
+            date, post_date, description, amount, category.
         """
         content = await file.read()
-        with pdfplumber.open(io.BytesIO(content)) as pdf:
-            transactions, bank_type = self._extract_from_pdf(pdf)
-
-        if transactions:
-            return pd.DataFrame([t.to_dict() for t in transactions]), bank_type
-
-        return pd.DataFrame(), bank_type
+        redacted_bytes = self._redactor.redact(content)
+        return await self._gemini.extract_async(
+            redacted_bytes, categories=categories, context=context,
+        )
 
     async def extract_from_uploads(
-        self, files: list[UploadFile]
-    ) -> list[tuple[str, pd.DataFrame, BankType]]:
+        self,
+        files: list[UploadFile],
+        *,
+        categories: list[str] | None = None,
+        context: Optional[str] = None,
+    ) -> list[tuple[str, list[dict]]]:
         """
-        Extract transactions from multiple uploaded files.
-        
+        Extract transactions from multiple uploaded PDFs.
+
         Args:
             files: List of FastAPI UploadFile objects.
-            
+            categories: Budget categories.
+            context: Optional extra context.
+
         Returns:
-            List of tuples (filename, DataFrame, BankType) for each file.
+            List of (filename, transactions) tuples.
         """
         results = []
         for file in files:
-            df, bank_type = await self.extract_from_upload(file)
-            results.append((file.filename, df, bank_type))
+            transactions = await self.extract_from_upload(
+                file, categories=categories, context=context,
+            )
+            results.append((file.filename, transactions))
         return results
 
-    def _extract_from_pdf(self, pdf) -> tuple[list[Transaction], BankType]:
-        """Extract transactions from an open PDF object."""
-        all_transactions = []
-        all_lines, full_text = self._extract_text(pdf)
-        bank_type = self.detect_bank_type(full_text)
-        parser = self._parsers[bank_type]
+    def redact(self, pdf_bytes: bytes) -> bytes:
+        """
+        Redact PII from raw PDF bytes (convenience wrapper).
 
-        for page in pdf.pages:
-            text = page.extract_text()
-            if not text:
-                continue
+        Args:
+            pdf_bytes: Original PDF content.
 
-            lines = text.split('\n')
-            transactions = parser.parse(lines, all_lines)
-            all_transactions.extend(transactions)
-
-        return all_transactions, bank_type
-
-    def _extract_text(self, pdf) -> tuple[list[str], str]:
-        """Extract all text from PDF pages."""
-        all_lines = []
-        full_text = ""
-
-        for page in pdf.pages:
-            text = page.extract_text()
-            if text:
-                all_lines.extend(text.split('\n'))
-                full_text += text + "\n"
-
-        return all_lines, full_text
+        Returns:
+            Redacted PDF bytes.
+        """
+        return self._redactor.redact(pdf_bytes)
