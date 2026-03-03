@@ -22,7 +22,13 @@ You are an expert financial data extraction assistant.
 
 Analyze the attached bank statement PDF and extract **every** transaction.
 
-For each transaction return a JSON object with these fields:
+Return a JSON **object** with the following structure:
+{{
+  "statement_year": <int — the year the statement covers, e.g. 2025>,
+  "transactions": [ ... ]
+}}
+
+Each item in the "transactions" array must have these fields:
 - "date": transaction date in YYYY/MM/DD format
 - "post_date": posting date in YYYY/MM/DD format (null if not available)
 - "description": merchant / payee description exactly as it appears
@@ -37,7 +43,8 @@ Rules:
 1. Use ONLY the categories listed above. Pick the single best match.
 2. If the year is not explicitly shown on a transaction line, infer it from the statement date or surrounding context.
 3. Payments to the credit card itself should be negative amounts with category "Insurance and Financial Services".
-4. Return ONLY a JSON array — no markdown fences, no commentary.
+4. Return ONLY the JSON object described above — no markdown fences, no commentary.
+5. "statement_year" must be an integer representing the primary year the statement covers (e.g. if the statement period is Dec 2024 – Jan 2025, use the year that most transactions fall in).
 {context_instruction}
 """
 
@@ -82,7 +89,7 @@ class GeminiExtractor:
         *,
         categories: list[str] | None = None,
         context: str | None = None,
-    ) -> list[dict]:
+    ) -> dict:
         """
         Send a redacted PDF to Gemini and return extracted transactions.
 
@@ -94,8 +101,10 @@ class GeminiExtractor:
                      bank name, currency).
 
         Returns:
-            List of transaction dicts with keys:
-            date, post_date, description, amount, category.
+            Dict with keys:
+            - statement_year: int
+            - transactions: list of dicts with keys:
+              date, post_date, description, amount, category.
         """
         cats = categories or DEFAULT_BUDGET_CATEGORIES
         category_list = "\n".join(f"- {c}" for c in cats)
@@ -130,9 +139,12 @@ class GeminiExtractor:
         *,
         categories: list[str] | None = None,
         context: str | None = None,
-    ) -> list[dict]:
+    ) -> dict:
         """
         Async version of extract(). Same interface, uses async Gemini client.
+
+        Returns:
+            Dict with keys: statement_year (int), transactions (list[dict]).
         """
         cats = categories or DEFAULT_BUDGET_CATEGORIES
         category_list = "\n".join(f"- {c}" for c in cats)
@@ -164,8 +176,8 @@ class GeminiExtractor:
     # ── Helpers ──────────────────────────────────────────────────────────
 
     @staticmethod
-    def _parse_response(response) -> list[dict]:
-        """Parse the Gemini JSON response into a list of transaction dicts."""
+    def _parse_response(response) -> dict:
+        """Parse the Gemini JSON response into a dict with statement_year and transactions."""
         raw = response.text.strip()
 
         # Strip markdown code fences if the model added them
@@ -177,8 +189,11 @@ class GeminiExtractor:
 
         data = json.loads(raw)
 
+        # Extract statement_year from the top-level object
+        statement_year: int | None = None
         if isinstance(data, dict):
-            # Some models wrap in {"transactions": [...]}
+            statement_year = data.get("statement_year")
+            # Unwrap to the transactions list
             for key in ("transactions", "data", "results"):
                 if key in data and isinstance(data[key], list):
                     data = data[key]
@@ -201,4 +216,7 @@ class GeminiExtractor:
                 "transaction_source": item.get("transaction_source") or None,
             })
 
-        return transactions
+        return {
+            "statement_year": int(statement_year) if statement_year is not None else None,
+            "transactions": transactions,
+        }

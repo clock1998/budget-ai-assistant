@@ -49,7 +49,7 @@ class TransactionExtractor:
         *,
         categories: list[str] | None = None,
         context: Optional[str] = None,
-    ) -> list[dict]:
+    ) -> dict:
         """
         Extract and categorise transactions from a single uploaded PDF.
 
@@ -59,8 +59,10 @@ class TransactionExtractor:
             context: Optional extra context for the Gemini prompt.
 
         Returns:
-            List of transaction dicts with keys:
-            date, post_date, description, amount, category.
+            Dict with keys:
+            - statement_year: int | None
+            - transactions: list of transaction dicts with keys:
+              date, post_date, description, amount, category.
         """
         content = await file.read()
         redacted_bytes = self._redactor.redact(content)
@@ -74,7 +76,7 @@ class TransactionExtractor:
         *,
         categories: list[str] | None = None,
         context: Optional[str] = None,
-    ) -> list[tuple[str, list[dict]]]:
+    ) -> list[tuple[str, dict]]:
         """
         Extract transactions from multiple uploaded PDFs.
 
@@ -84,14 +86,15 @@ class TransactionExtractor:
             context: Optional extra context.
 
         Returns:
-            List of (filename, transactions) tuples.
+            List of (filename, result_dict) tuples where result_dict
+            has keys: statement_year, transactions.
         """
         results = []
         for file in files:
-            transactions = await self.extract_from_upload(
+            result = await self.extract_from_upload(
                 file, categories=categories, context=context,
             )
-            results.append((file.filename, transactions))
+            results.append((file.filename, result))
         return results
 
     def redact(self, pdf_bytes: bytes) -> bytes:

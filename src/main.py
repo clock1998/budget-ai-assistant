@@ -5,38 +5,25 @@ FastAPI endpoints for extracting transactions from bank statement PDFs.
 
 Workflow: Upload PDF → Redact PII → Gemini extracts & categorises → Response
 """
-import csv
 import io
 import uvicorn
-from enum import Enum
 from typing import Optional
  
 from fastapi import FastAPI, File, HTTPException, UploadFile, Form
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
 
-from src.categories import DEFAULT_BUDGET_CATEGORIES
 from src.pdf_extractor.extractor import TransactionExtractor
 from src.pdf_extractor.redactor import PiiRedactor
-
-
-class OutputFormat(str, Enum):
-    json = "json"
-    csv = "csv"
-
-
-class ExtractOptions(BaseModel):
-    """Options for transaction extraction, sent as JSON in a form field."""
-    categories: list[str] = DEFAULT_BUDGET_CATEGORIES
-    context: Optional[str] = None
-    format: OutputFormat = OutputFormat.json
-
-
-def parse_options(options: Optional[str] = Form(None)) -> ExtractOptions:
-    """Parse the 'options' form field as JSON into ExtractOptions."""
-    if options is None:
-        return ExtractOptions()
-    return ExtractOptions.model_validate_json(options)
+from src.google.sheets import GoogleSheetsClient
+from src.schemas import (
+    ExtractOptions,
+    FileResult,
+    OutputFormat,
+    Response,
+    SheetsResponse,
+    TransactionResponse,
+)
+from src.helpers import parse_options, transactions_to_csv
 
 
 app = FastAPI(
@@ -44,42 +31,6 @@ app = FastAPI(
     description="Extract transactions from bank statement PDFs",
     version="1.0.0",
 )
-
-
-def transactions_to_csv(transactions: list["TransactionResponse"]) -> str:
-    """Convert a list of TransactionResponse objects to a CSV string."""
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["date", "post_date", "description", "amount", "category", "transaction_source"])
-    for txn in transactions:
-        writer.writerow([txn.date, txn.post_date or "", txn.description, txn.amount, txn.category or "", txn.transaction_source or ""])
-    return output.getvalue()
-
-
-class TransactionResponse(BaseModel):
-    """Response model for a single transaction."""
-    date: str
-    post_date: Optional[str]
-    description: str
-    amount: float
-    category: Optional[str] = None
-    transaction_source: Optional[str] = None
-
-
-class FileResult(BaseModel):
-    """Result for a single file extraction."""
-    filename: str
-    transactions: list[TransactionResponse]
-    transaction_count: int
-    error: Optional[str] = None
-
-
-class Response(BaseModel):
-    """Response model for extraction endpoint."""
-    total_files: int
-    successful: int
-    failed: int
-    results: list[FileResult]
 
 
 @app.post("/extract", response_model=Response)
@@ -110,11 +61,11 @@ async def extract_transactions(
     results = []
     successful = 0
     failed = 0
+    all_raw_transactions: list[dict] = []
 
     for file in files:
         if not file.filename.lower().endswith('.pdf'):
             results.append(FileResult(
-                filename=file.filename,
                 transactions=[],
                 transaction_count=0,
                 error="File must be a PDF",
@@ -123,16 +74,21 @@ async def extract_transactions(
             continue
 
         try:
-            raw_transactions = await extractor.extract_from_upload(
+            extraction_result = await extractor.extract_from_upload(
                 file, categories=opts.categories, context=opts.context,
             )
+
+            raw_transactions = extraction_result["transactions"]
+            statement_year = extraction_result.get("statement_year")
+
+            all_raw_transactions.extend(raw_transactions)
 
             transactions = [
                 TransactionResponse(**txn) for txn in raw_transactions
             ]
 
             results.append(FileResult(
-                filename=file.filename,
+                statement_year=statement_year,
                 transactions=transactions,
                 transaction_count=len(transactions),
             ))
@@ -140,7 +96,6 @@ async def extract_transactions(
 
         except Exception as e:
             results.append(FileResult(
-                filename=file.filename,
                 transactions=[],
                 transaction_count=0,
                 error=str(e),
@@ -154,6 +109,20 @@ async def extract_transactions(
             io.StringIO(csv_content),
             media_type="text/csv",
             headers={"Content-Disposition": "attachment; filename=transactions.csv"},
+        )
+
+    if opts.format == OutputFormat.google_sheets:
+        sheets = GoogleSheetsClient()
+        url = sheets.export_transactions(
+            all_raw_transactions,
+            spreadsheet_id=opts.spreadsheet_id,
+            title=opts.sheet_title,
+            worksheet_name=opts.worksheet_name,
+            share_with=opts.share_with,
+        )
+        return SheetsResponse(
+            spreadsheet_url=url,
+            transaction_count=len(all_raw_transactions),
         )
 
     return Response(
@@ -189,9 +158,12 @@ async def extract_single_file(
     extractor = TransactionExtractor()
 
     try:
-        raw_transactions = await extractor.extract_from_upload(
+        extraction_result = await extractor.extract_from_upload(
             file, categories=opts.categories, context=opts.context,
         )
+
+        raw_transactions = extraction_result["transactions"]
+        statement_year = extraction_result.get("statement_year")
 
         transactions = [
             TransactionResponse(**txn) for txn in raw_transactions
@@ -205,8 +177,22 @@ async def extract_single_file(
                 headers={"Content-Disposition": f"attachment; filename={file.filename.rsplit('.', 1)[0]}_transactions.csv"},
             )
 
+        if opts.format == OutputFormat.google_sheets:
+            sheets = GoogleSheetsClient()
+            url = sheets.export_transactions(
+                raw_transactions,
+                spreadsheet_id=opts.spreadsheet_id,
+                title=opts.sheet_title or f"{file.filename} Transactions",
+                worksheet_name=opts.worksheet_name,
+                share_with=opts.share_with,
+            )
+            return SheetsResponse(
+                spreadsheet_url=url,
+                transaction_count=len(raw_transactions),
+            )
+
         return FileResult(
-            filename=file.filename,
+            statement_year=statement_year,
             transactions=transactions,
             transaction_count=len(transactions),
         )
@@ -294,5 +280,4 @@ async def redact_multiple_pdfs(files: list[UploadFile] = File(...)):
 
 
 if __name__ == "__main__":
-
     uvicorn.run(app, host="0.0.0.0", port=8000)
