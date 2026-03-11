@@ -14,7 +14,6 @@ from src.categories import DEFAULT_BUDGET_CATEGORIES
 class OutputFormat(str, Enum):
     json = "json"
     csv = "csv"
-    google_sheets = "google_sheets"
 
 
 class ExtractOptions(BaseModel):
@@ -45,12 +44,6 @@ class FileResult(BaseModel):
     transactions: list[TransactionResponse]
     transaction_count: int
     error: Optional[str] = None
-
-
-class SheetsResponse(BaseModel):
-    """Response returned when exporting to Google Sheets."""
-    spreadsheet_url: str
-    transaction_count: int
 
 
 class Response(BaseModel):

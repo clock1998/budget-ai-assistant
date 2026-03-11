@@ -18,7 +18,6 @@ from src.schemas import (
     FileResult,
     OutputFormat,
     Response,
-    SheetsResponse,
     TransactionResponse,
 )
 from src.helpers import parse_options, transactions_to_csv
@@ -62,7 +61,6 @@ async def extract_transactions(
     results = []
     successful = 0
     failed = 0
-    all_raw_transactions: list[dict] = []
 
     for file in files:
         if not file.filename.lower().endswith('.pdf'):
@@ -81,8 +79,6 @@ async def extract_transactions(
 
             raw_transactions = extraction_result["transactions"]
             statement_year = extraction_result.get("statement_year")
-
-            all_raw_transactions.extend(raw_transactions)
 
             transactions = [
                 TransactionResponse(**txn) for txn in raw_transactions
@@ -118,61 +114,6 @@ async def extract_transactions(
         failed=failed,
         results=results,
     )
-
-
-@app.post("/extract/single", response_model=FileResult)
-async def extract_single_file(
-    file: UploadFile = File(...),
-    options: Optional[str] = Form(None),
-):
-    """
-    Extract and categorise transactions from a single bank statement PDF.
-
-    Args:
-        file: PDF file to process.
-        options: JSON string with extraction options. Accepts:
-            - categories: list of budget categories
-            - context: optional context for Gemini prompt
-            - format: "json" or "csv" (default: "json")
-
-    Returns:
-        FileResult with extracted transactions, or a CSV download.
-    """
-    opts = parse_options(options)
-    if not file.filename.lower().endswith('.pdf'):
-        raise HTTPException(status_code=400, detail="File must be a PDF")
-
-    extractor = TransactionExtractor()
-
-    try:
-        extraction_result = await extractor.extract_from_upload(
-            file, categories=opts.categories, context=opts.context,
-        )
-
-        raw_transactions = extraction_result["transactions"]
-        statement_year = extraction_result.get("statement_year")
-
-        transactions = [
-            TransactionResponse(**txn) for txn in raw_transactions
-        ]
-
-        if opts.format == OutputFormat.csv:
-            csv_content = transactions_to_csv(transactions)
-            return StreamingResponse(
-                io.StringIO(csv_content),
-                media_type="text/csv",
-                headers={"Content-Disposition": f"attachment; filename={file.filename.rsplit('.', 1)[0]}_transactions.csv"},
-            )
-
-        return FileResult(
-            statement_year=statement_year,
-            transactions=transactions,
-            transaction_count=len(transactions),
-        )
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
