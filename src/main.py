@@ -13,7 +13,6 @@ from fastapi import FastAPI, File, HTTPException, UploadFile, Form
 from fastapi.responses import StreamingResponse
 
 from src.pdf_extractor.extractor import TransactionExtractor
-from src.google.sheets import GoogleSheetsClient
 from src.schemas import (
     ExtractOptions,
     FileResult,
@@ -113,23 +112,6 @@ async def extract_transactions(
             headers={"Content-Disposition": "attachment; filename=transactions.csv"},
         )
 
-    if opts.format == OutputFormat.google_sheets:
-        if not opts.sheet_title:
-            years = sorted({r.statement_year for r in results if r.statement_year})
-            default_title = f"{', '.join(map(str, years))} Transactions" if years else "Transactions"
-        sheets = GoogleSheetsClient()
-        url = sheets.export_transactions(
-            all_raw_transactions,
-            spreadsheet_id=opts.spreadsheet_id,
-            title=opts.sheet_title or default_title,
-            worksheet_name=opts.worksheet_name,
-            share_with=opts.share_with,
-        )
-        return SheetsResponse(
-            spreadsheet_url=url,
-            transaction_count=len(all_raw_transactions),
-        )
-
     return Response(
         total_files=len(files),
         successful=successful,
@@ -180,21 +162,6 @@ async def extract_single_file(
                 io.StringIO(csv_content),
                 media_type="text/csv",
                 headers={"Content-Disposition": f"attachment; filename={file.filename.rsplit('.', 1)[0]}_transactions.csv"},
-            )
-
-        if opts.format == OutputFormat.google_sheets:
-            default_title = f"{statement_year} Transactions" if statement_year else "Transactions"
-            sheets = GoogleSheetsClient()
-            url = sheets.export_transactions(
-                raw_transactions,
-                spreadsheet_id=opts.spreadsheet_id,
-                title=opts.sheet_title or default_title,
-                worksheet_name=opts.worksheet_name,
-                share_with=opts.share_with,
-            )
-            return SheetsResponse(
-                spreadsheet_url=url,
-                transaction_count=len(raw_transactions),
             )
 
         return FileResult(
