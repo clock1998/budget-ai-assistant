@@ -28,5 +28,6 @@ DEFAULT_BUDGET_CATEGORIES = [
     "Insurance and Financial Services",
     "Education and Learning",
     "Government Fees and Taxes",
-    "Charity and Donations"
+    "Charity and Donations",
+    "Credit Card Repayments"
 ]

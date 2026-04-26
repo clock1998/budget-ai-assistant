@@ -6,18 +6,19 @@ POST {{baseUrl}}/extract
 Content-Type: multipart/form-data; boundary=----WebKitFormBoundary
 
 ------WebKitFormBoundary
-Content-Disposition: form-data; name="files"; filename="desjardins_december_2025.pdf"
+Content-Disposition: form-data; name="files"; filename="desjardins.pdf"
 Content-Type: application/pdf
 
-< ./desjardins2025.pdf
+< ./desjardins.pdf
 ------WebKitFormBoundary
-Content-Disposition: form-data; name="files"; filename="scotia_bank_december_2025.pdf"
+Content-Disposition: form-data; name="files"; filename="scotiabank.pdf"
 Content-Type: application/pdf
 
-< ./scotia_bank_december_2025.pdf
+< ./scotiabank.pdf
 ------WebKitFormBoundary
-Content-Disposition: form-data; name="files"; filename="rogers_december_2025.pdf"
-Content-Type: application/pdf
+Content-Disposition: form-data; name="options"
+Content-Type: application/json
 
-< ./rogers_december_2025.pdf
+{"format": "csv"}
+
 ------WebKitFormBoundary--

@@ -1,0 +1,30 @@
+### Redact PII from a single PDF
+@baseUrl = http://localhost:8000
+
+# @name redactSingle
+POST {{baseUrl}}/redact
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundary
+
+------WebKitFormBoundary
+Content-Disposition: form-data; name="file"; filename="statement.pdf"
+Content-Type: application/pdf
+
+< ./desjardins2025.pdf
+------WebKitFormBoundary--
+
+### Redact PII from multiple PDFs (returns ZIP)
+# @name redactMultiple
+POST {{baseUrl}}/redact/multiple
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundary
+
+------WebKitFormBoundary
+Content-Disposition: form-data; name="files"; filename="statement1.pdf"
+Content-Type: application/pdf
+
+< ./statement1.pdf
+------WebKitFormBoundary
+Content-Disposition: form-data; name="files"; filename="statement2.pdf"
+Content-Type: application/pdf
+
+< ./statement2.pdf
+------WebKitFormBoundary--
