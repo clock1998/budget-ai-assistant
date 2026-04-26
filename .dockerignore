@@ -1,0 +1,39 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local venv scaffold (bin/ include/ lib/ are the venv dirs in this repo)
+bin/
+include/
+lib/
+
+# Dev/test artefacts
+.pytest_cache/
+.DS_Store
+
+# IDE config
+.vscode/
+.idea/
+
+# Git
+.git/
+.gitignore
+
+# Sample PDFs and data files – not needed in the image
+*.pdf
+*.csv
+
+# HTTP scratch files
+http/
+
+# Old / unused source code
+src/WithOpenSourceModelOld/
+
+# Tests
+tests/
