@@ -1,0 +1,127 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches: [ "master", "main" ]
+    tags: [ 'v*.*.*' ]
+  pull_request:
+    branches: [ "master", "main" ]
+  # workflow_dispatch:
+  #   inputs:
+  #     tag:
+  #       description: 'Image tag to deploy'
+  #       required: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: self-hosted
+    outputs:
+      tags: ${{ steps.meta.outputs.tags }}
+      labels: ${{ steps.meta.outputs.labels }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up buildx (single-platform, with cache)
+        uses: docker/setup-buildx-action@v3
+
+      - id: meta
+        name: Extract metadata (tags, labels)
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            # Tag with the full version (e.g. v1.2.3) when a git tag is pushed
+            type=semver,pattern=v{{version}}
+            # Keep your existing tags
+            type=raw,value=latest
+            # type=sha
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./Spikylin
+          push: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  push:
+    runs-on: self-hosted
+    needs: build
+    if: |
+      startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up buildx (single-platform, with cache)
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./Spikylin
+          push: true
+          tags: ${{ needs.build.outputs.tags }}
+          labels: ${{ needs.build.outputs.labels }}
+          provenance: false # Prevent push the OCI artifact (like a provenance or SBOM file) 
+          sbom: false # Prevent push the OCI artifact (like a provenance or SBOM file) 
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: push
+    # Only run deploy on tag pushes or when a tag is provided to workflow_dispatch
+    if: |
+      startsWith(github.ref, 'refs/tags/') 
+    runs-on: self-hosted
+    env:
+      REGISTRY: ghcr.io
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine image tag
+        id: tag
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG=${GITHUB_REF#refs/tags/}
+          elif [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG=${{ github.event.inputs.tag }}
+          else
+            TAG=latest
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Deploy via SSH Loopback (localhost)
+        uses: appleboy/ssh-action@v1.2.4
+        with:
+          host: 127.0.0.1
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+            export TAG=${{ steps.tag.outputs.tag }}
+            export IMAGE=${{ env.REGISTRY }}/${{ github.repository }}:$TAG
+            docker pull $IMAGE
+            docker compose -f ${{ github.workspace }}/Spikylin/docker-compose.yml -p spikylin up -d --remove-orphans
+
+      - name: Announce deployment
+        run: |
+          echo "Successfully deployed ${{ github.repository }}:${{ steps.tag.outputs.tag }} via SSH loopback"
