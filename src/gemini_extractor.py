@@ -12,7 +12,7 @@ import os
 from google import genai
 from google.genai import types
 
-from src.categories import DEFAULT_BUDGET_CATEGORIES
+from categories import DEFAULT_BUDGET_CATEGORIES
 
 logger = logging.getLogger(__name__)
 

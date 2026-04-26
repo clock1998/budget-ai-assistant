@@ -7,15 +7,16 @@ and viewing extracted transactions.
 
 import csv
 import io
+import sys
 import tempfile
 from pathlib import Path
 
 import gradio as gr
 import pandas as pd
 
-from src.categories import DEFAULT_BUDGET_CATEGORIES
-from src.pdf_extractor.extractor import TransactionExtractor
-from src.pdf_extractor.redactor import PiiRedactor
+from categories import DEFAULT_BUDGET_CATEGORIES
+from gemini_extractor import GeminiExtractor
+from redactor import PiiRedactor
 
 
 async def extract_transactions(
@@ -29,7 +30,8 @@ async def extract_transactions(
     if not files:
         return pd.DataFrame(), None
 
-    extractor = TransactionExtractor()
+    redactor = PiiRedactor()
+    gemini_extractor = GeminiExtractor()
 
     all_rows: list[dict] = []
 
@@ -39,8 +41,8 @@ async def extract_transactions(
             continue
 
         pdf_bytes = path.read_bytes()
-        redacted = extractor._redactor.redact(pdf_bytes)
-        result = await extractor._gemini.extract_async(
+        redacted = redactor.redact(pdf_bytes)
+        result = await gemini_extractor.extract_async(
             redacted,
             categories=DEFAULT_BUDGET_CATEGORIES,
             context=context or None,
