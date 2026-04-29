@@ -24,7 +24,6 @@ EXPOSE 7860
 
 # GOOGLE_API_KEY must be supplied at runtime, e.g.:
 #   docker run -e GOOGLE_API_KEY=<key> -p 7860:7860 budget-ai-assistant
-ENV GOOGLE_API_KEY=""
 
 # Run from /app so that src/ is on the path
 CMD ["python", "src/ui.py"]
