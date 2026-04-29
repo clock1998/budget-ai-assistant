@@ -95,6 +95,7 @@ jobs:
     if: |
       startsWith(github.ref, 'refs/tags/') 
     runs-on: self-hosted
+    environment: prod-0
     env:
       REGISTRY: ghcr.io
 
